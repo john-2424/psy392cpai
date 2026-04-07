@@ -8,7 +8,11 @@ class SuccessorFeatureHead(nn.Module):
     """
     Maps state features phi(s) to successor features psi(s, a)
     for each discrete action.
-    Output shape: [batch_size, n_actions, feature_dim]
+
+    Input:
+        state_features: [B, d]
+    Output:
+        psi: [B, A, d]
     """
 
     def __init__(

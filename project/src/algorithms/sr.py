@@ -12,6 +12,9 @@ from src.models.cnn_encoder import GridCNNEncoder
 from src.models.sr_heads import SuccessorFeatureHead
 
 
+DEBUG_SR = False
+
+
 class SRNet(nn.Module):
     """
     Deep successor feature network:
@@ -24,8 +27,8 @@ class SRNet(nn.Module):
         self,
         obs_channels: int = 3,
         grid_size: int = 8,
-        feature_dim: int = 128,
-        hidden_dim: int = 128,
+        feature_dim: int = 64,
+        hidden_dim: int = 64,
         n_actions: int = 4,
     ):
         super().__init__()
@@ -101,23 +104,13 @@ def compute_sr_loss(
     next_obs = batch.next_obs
     dones = batch.dones.float()
 
-    phi = model.encode(obs)                              # [B, d]
-    psi_all = model.successor_features(obs)             # [B, A, d]
+    phi = model.encode(obs)                                 # [B, d]
+    psi_all = model.successor_features(obs)                 # [B, A, d]
     psi_sa = psi_all[torch.arange(obs.shape[0]), actions]  # [B, d]
 
-    if obs.shape[0] == 1:
-        print("phi shape:", phi.shape)
-        print("psi_all shape:", psi_all.shape)
-        print("actions shape:", actions.shape)
-        print("psi_sa shape:", psi_sa.shape)
-        print("dones:", dones.shape, dones)
-        print("next_psi shape:", next_psi.shape)
-        print("sr_target shape:", sr_target.shape)
-        print("sr_loss:", sr_loss.item(), "reward_loss:", reward_loss.item())
-        
     with torch.no_grad():
-        next_q = target_model.q_values(next_obs)        # [B, A]
-        next_actions = next_q.argmax(dim=1)             # [B]
+        next_q = target_model.q_values(next_obs)            # [B, A]
+        next_actions = next_q.argmax(dim=1)                 # [B]
         next_psi_all = target_model.successor_features(next_obs)
         next_psi = next_psi_all[torch.arange(obs.shape[0]), next_actions]  # [B, d]
 
@@ -129,7 +122,18 @@ def compute_sr_loss(
     pred_reward = torch.einsum("bd,d->b", phi, model.reward_weights)
     reward_loss = F.mse_loss(pred_reward, rewards)
 
-    total_loss = sr_loss + reward_loss
+    # Slightly emphasize reward prediction to help stabilize early learning.
+    total_loss = sr_loss + 5.0 * reward_loss
+
+    if DEBUG_SR and obs.shape[0] == 1:
+        print("phi shape:", phi.shape)
+        print("psi_all shape:", psi_all.shape)
+        print("actions shape:", actions.shape)
+        print("psi_sa shape:", psi_sa.shape)
+        print("next_psi shape:", next_psi.shape)
+        print("sr_target shape:", sr_target.shape)
+        print("dones:", dones.shape, dones)
+        print("sr_loss:", sr_loss.item(), "reward_loss:", reward_loss.item())
 
     metrics = {
         "sr_loss": float(sr_loss.item()),
@@ -140,7 +144,7 @@ def compute_sr_loss(
     return total_loss, metrics
 
 
-def soft_update(target: nn.Module, source: nn.Module, tau: float = 0.01) -> None:
+def soft_update(target: nn.Module, source: nn.Module, tau: float = 0.02) -> None:
     with torch.no_grad():
         for target_param, source_param in zip(target.parameters(), source.parameters()):
             target_param.data.mul_(1.0 - tau)
@@ -156,7 +160,6 @@ def freeze_encoder_and_sr_head(model: SRNet) -> None:
         param.requires_grad = False
     for param in model.sr_head.parameters():
         param.requires_grad = False
-
     model.reward_weights.requires_grad_(True)
 
 
@@ -165,5 +168,4 @@ def unfreeze_all(model: SRNet) -> None:
         param.requires_grad = True
     for param in model.sr_head.parameters():
         param.requires_grad = True
-
     model.reward_weights.requires_grad_(True)
