@@ -58,15 +58,21 @@ def _save_training_plot(
     plt.close()
 
 
-def make_ppo_plots(seed: int = 0, results_dir: str = "results") -> None:
+def make_agent_plots(agent_name: str = "ppo", seed: int = 0, results_dir: str = "results") -> None:
     results_path = Path(results_dir)
     csv_dir = results_path / "csv"
     fig_dir = results_path / "figures"
+    fig_dir.mkdir(parents=True, exist_ok=True)
 
-    train_df = _read_csv(csv_dir / f"ppo_seed{seed}_train.csv")
-    stable_df = _read_csv(csv_dir / f"ppo_seed{seed}_eval_stable.csv")
-    reward_df = _read_csv(csv_dir / f"ppo_seed{seed}_eval_reward_change.csv")
-    transition_df = _read_csv(csv_dir / f"ppo_seed{seed}_eval_transition_change.csv")
+    train_csv = csv_dir / f"{agent_name}_seed{seed}_train.csv"
+    stable_csv = csv_dir / f"{agent_name}_seed{seed}_eval_stable.csv"
+    reward_csv = csv_dir / f"{agent_name}_seed{seed}_eval_reward_change.csv"
+    transition_csv = csv_dir / f"{agent_name}_seed{seed}_eval_transition_change.csv"
+
+    train_df = _read_csv(train_csv)
+    stable_df = _read_csv(stable_csv)
+    reward_df = _read_csv(reward_csv)
+    transition_df = _read_csv(transition_csv)
 
     eval_dfs = {
         "stable": stable_df,
@@ -74,58 +80,45 @@ def make_ppo_plots(seed: int = 0, results_dir: str = "results") -> None:
         "transition_change": transition_df,
     }
 
+    x_col = "collected_frames" if "collected_frames" in stable_df.columns else "episode"
+    train_x_col = "collected_frames" if "collected_frames" in train_df.columns else "episode"
+
     _save_line_plot(
-        eval_dfs,
-        "success_rate",
-        f"PPO Seed {seed}: Success Rate Across Conditions",
-        "success_rate",
-        fig_dir / f"ppo_seed{seed}_condition_success_comparison.png",
-    )
-    _save_line_plot(
-        eval_dfs,
-        "avg_return",
-        f"PPO Seed {seed}: Average Return Across Conditions",
-        "avg_return",
-        fig_dir / f"ppo_seed{seed}_condition_return_comparison.png",
-    )
-    _save_line_plot(
-        eval_dfs,
-        "avg_steps",
-        f"PPO Seed {seed}: Average Steps Across Conditions",
-        "avg_steps",
-        fig_dir / f"ppo_seed{seed}_condition_steps_comparison.png",
-    )
-    _save_line_plot(
-        {"stable": stable_df},
-        "success_rate",
-        f"PPO Seed {seed}: Stable Success Rate",
-        "success_rate",
-        fig_dir / f"ppo_seed{seed}_stable_success.png",
-    )
-    _save_line_plot(
-        {"stable": stable_df},
-        "avg_return",
-        f"PPO Seed {seed}: Stable Average Return",
-        "avg_return",
-        fig_dir / f"ppo_seed{seed}_stable_return.png",
-    )
-    _save_training_plot(
-        train_df,
-        "mean_batch_reward",
-        f"PPO Seed {seed}: Mean Batch Reward",
-        "mean_batch_reward",
-        fig_dir / f"ppo_seed{seed}_train_mean_batch_reward.png",
-    )
-    _save_training_plot(
-        train_df,
-        "total_loss",
-        f"PPO Seed {seed}: Total Loss",
-        "total_loss",
-        fig_dir / f"ppo_seed{seed}_train_total_loss.png",
+        dfs=eval_dfs,
+        y_col="success_rate",
+        title=f"{agent_name.upper()} Seed {seed}: Success Rate Across Conditions",
+        ylabel="success_rate",
+        out_path=fig_dir / f"{agent_name}_seed{seed}_condition_success_comparison.png",
+        x_col=x_col,
     )
 
-    print(f"Saved plots to: {fig_dir}")
+    _save_line_plot(
+        dfs=eval_dfs,
+        y_col="avg_return",
+        title=f"{agent_name.upper()} Seed {seed}: Average Return Across Conditions",
+        ylabel="avg_return",
+        out_path=fig_dir / f"{agent_name}_seed{seed}_condition_return_comparison.png",
+        x_col=x_col,
+    )
 
+    _save_line_plot(
+        dfs=eval_dfs,
+        y_col="avg_steps",
+        title=f"{agent_name.upper()} Seed {seed}: Average Steps Across Conditions",
+        ylabel="avg_steps",
+        out_path=fig_dir / f"{agent_name}_seed{seed}_condition_steps_comparison.png",
+        x_col=x_col,
+    )
+
+    if "episode_return" in train_df.columns:
+        _save_training_plot(
+            train_df=train_df,
+            y_col="episode_return",
+            title=f"{agent_name.upper()} Seed {seed}: Episode Return",
+            ylabel="episode_return",
+            out_path=fig_dir / f"{agent_name}_seed{seed}_train_episode_return.png",
+            x_col=train_x_col,
+        )
 
 if __name__ == "__main__":
-    make_ppo_plots(seed=0, results_dir="results")
+    make_agent_plots(agent_name="ppo", seed=0, results_dir="results")
