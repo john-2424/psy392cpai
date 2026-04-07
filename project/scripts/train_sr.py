@@ -156,9 +156,9 @@ def train():
     num_episodes = 300
     num_reward_reval_episodes = 20
     max_steps_per_episode = 50
-    gamma = 0.99
+    gamma = 0.95
     lr = 3e-4
-    tau = 0.02
+    tau = 0.05
 
     epsilon_start = 1.0
     epsilon_end = 0.05
@@ -167,7 +167,7 @@ def train():
     eval_interval = 25
     save_interval = 50
 
-    RUN_REWARD_REVAL = False
+    RUN_REWARD_REVAL = True
 
     buffer_capacity = 5000
     batch_size = 32
@@ -303,6 +303,7 @@ def train():
 
                     optimizer.zero_grad()
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                     soft_update(target_model, model, tau=tau)
 

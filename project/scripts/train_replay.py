@@ -145,6 +145,7 @@ def train():
     action_counts = [0, 0, 0, 0]
 
     global_step = 0
+    best_stable_success = 0.0
 
     for episode in range(1, num_episodes + 1):
         epsilon = max(
@@ -253,6 +254,19 @@ def train():
             print(f"[Episode {episode}] action counts: {action_counts}")
             print(f"[Episode {episode}] replay buffer size: {len(replay_buffer)}")
             action_counts = [0, 0, 0, 0]
+
+            if stable_metrics["success_rate"] > best_stable_success:
+                best_stable_success = stable_metrics["success_rate"]
+                torch.save(
+                    {
+                        "model_state_dict": model.state_dict(),
+                        "target_model_state_dict": target_model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "episode": episode,
+                        "stable_success_rate": stable_metrics["success_rate"],
+                    },
+                    model_dir / "replay_seed0_best.pt",
+                )
 
             append_csv_row(
                 csv_dir / "replay_seed0_eval_stable.csv",

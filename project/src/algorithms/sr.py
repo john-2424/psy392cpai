@@ -46,7 +46,11 @@ class SRNet(nn.Module):
         self.reward_weights = nn.Parameter(torch.zeros(feature_dim))
 
     def encode(self, obs: torch.Tensor) -> torch.Tensor:
-        return self.encoder(obs)
+        phi = self.encoder(obs)
+        # L2-normalise so ||phi||=1, bounding the SR fixed-point to
+        # ||psi*|| <= 1 / (1-gamma).  Without this, phi can grow
+        # unboundedly during encoder training and cause loss explosion.
+        return F.normalize(phi, p=2, dim=-1)
 
     def successor_features(self, obs: torch.Tensor) -> torch.Tensor:
         phi = self.encode(obs)                     # [B, d]
@@ -105,16 +109,18 @@ def compute_sr_loss(
     dones = batch.dones.float()
 
     phi = model.encode(obs)                                 # [B, d]
-    psi_all = model.successor_features(obs)                 # [B, A, d]
+    psi_all = model.sr_head(phi)                            # [B, A, d]
     psi_sa = psi_all[torch.arange(obs.shape[0]), actions]  # [B, d]
 
     with torch.no_grad():
+        # Use target network's phi for a stable, non-moving SR target
+        phi_target = target_model.encode(obs)               # [B, d]
         next_q = target_model.q_values(next_obs)            # [B, A]
         next_actions = next_q.argmax(dim=1)                 # [B]
         next_psi_all = target_model.successor_features(next_obs)
         next_psi = next_psi_all[torch.arange(obs.shape[0]), next_actions]  # [B, d]
 
-        sr_target = phi + gamma * (1.0 - dones.unsqueeze(1)) * next_psi
+        sr_target = phi_target + gamma * (1.0 - dones.unsqueeze(1)) * next_psi
 
     sr_loss = F.mse_loss(psi_sa, sr_target)
 
@@ -122,8 +128,8 @@ def compute_sr_loss(
     pred_reward = torch.einsum("bd,d->b", phi, model.reward_weights)
     reward_loss = F.mse_loss(pred_reward, rewards)
 
-    # Slightly emphasize reward prediction to help stabilize early learning.
-    total_loss = sr_loss + 5.0 * reward_loss
+    # Emphasize reward prediction so that reward weights w learn fast.
+    total_loss = sr_loss + 20.0 * reward_loss
 
     if DEBUG_SR and obs.shape[0] == 1:
         print("phi shape:", phi.shape)
