@@ -1,0 +1,8 @@
+torch
+torchrl
+tensordict
+gymnasium
+numpy
+matplotlib
+pandas
+pyyaml
