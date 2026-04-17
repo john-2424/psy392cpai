@@ -26,11 +26,18 @@ class GridWorldEnv(EnvBase):
         3: (0, 1),    # right
     }
 
+    # Channel permutation for obs_remap: original [agent, goal, walls]
+    # becomes [goal, walls, agent] -- same information present but the
+    # conv filters trained on the stable mapping see shuffled semantics.
+    # Analog of hippocampal global remapping (Sanders et al. 2020).
+    OBS_REMAP_PERM = (1, 2, 0)
+
     def __init__(
         self,
         grid_size: int = 8,
         max_steps: int = 50,
         change_mode: str = "stable",
+        observation_mode: str = "normal",
         device: str | torch.device = "cpu",
         seed: Optional[int] = None,
     ):
@@ -39,6 +46,9 @@ class GridWorldEnv(EnvBase):
         self.grid_size = int(grid_size)
         self.max_steps = int(max_steps)
         self.change_mode = str(change_mode)
+        if observation_mode not in {"normal", "visual_perturb", "obs_remap"}:
+            raise ValueError(f"Unknown observation_mode: {observation_mode}")
+        self.observation_mode = observation_mode
 
         self.step_count = 0
         self.agent_pos = (0, 0)
@@ -50,7 +60,23 @@ class GridWorldEnv(EnvBase):
             seed = int(torch.empty((), dtype=torch.int64).random_().item())
         self._set_seed(seed)
 
+        # Deterministic distractor mask for visual_perturb: 10% of cells
+        # get extra 0.3-intensity pixels on a fixed overlay baked into the
+        # agent channel. Same perturbation across episodes for a given
+        # env seed, different across env instances.
+        self._distractor = self._sample_distractor_mask()
+
         self._make_specs()
+
+    def _sample_distractor_mask(self) -> torch.Tensor:
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(self.seed + 9973)
+        total = self.grid_size * self.grid_size
+        mask = torch.zeros(total, dtype=torch.float32)
+        n_distract = max(1, total // 10)
+        idx = torch.randperm(total, generator=gen)[:n_distract]
+        mask[idx] = 0.3
+        return mask.view(self.grid_size, self.grid_size).to(self.device)
 
     def _make_specs(self) -> None:
         obs_shape = torch.Size([3, self.grid_size, self.grid_size])
@@ -135,6 +161,15 @@ class GridWorldEnv(EnvBase):
 
         for wr, wc in self.walls:
             obs[2, wr, wc] = 1.0
+
+        if self.observation_mode == "visual_perturb":
+            # Distractor pixels layered onto the agent channel. State
+            # identity unchanged (agent marker still 1.0), but input
+            # statistics shift. Clamp to [0, 1] to honour the obs spec.
+            obs[0] = torch.clamp(obs[0] + self._distractor, 0.0, 1.0)
+        elif self.observation_mode == "obs_remap":
+            perm = list(self.OBS_REMAP_PERM)
+            obs = obs[perm]
 
         return obs
 
