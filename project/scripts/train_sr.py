@@ -33,7 +33,7 @@ from src.envs.gridworld import GridWorldEnv
 
 
 SEEDS = [0, 1, 2]
-NUM_EPISODES = 300
+NUM_EPISODES = 500
 NUM_ADAPT_EPISODES = 60
 MAX_STEPS_PER_EPISODE = 50
 GAMMA = 0.95
@@ -43,7 +43,7 @@ BUFFER_CAPACITY = 5000
 BATCH_SIZE = 32
 MIN_BUFFER_SIZE = 100
 REPLAY_UPDATES_PER_STEP = 2
-EPS_START, EPS_END, EPS_DECAY_EPS = 1.0, 0.05, 200
+EPS_START, EPS_END, EPS_DECAY_EPS = 1.0, 0.05, 300
 EVAL_INTERVAL = 25
 ADAPT_EVAL_INTERVAL = 5
 N_EVAL_EPISODES = 20
@@ -158,6 +158,7 @@ def run_stable_training(seed: int, csv_dir: Path, model_dir: Path, device: str =
     eval_fieldnames = ["seed", "episode", "condition", "success_rate", "avg_return", "avg_steps"]
 
     global_step = 0
+    best_stable_success = -1.0
     for episode in range(1, NUM_EPISODES + 1):
         epsilon = max(
             EPS_END,
@@ -237,9 +238,15 @@ def run_stable_training(seed: int, csv_dir: Path, model_dir: Path, device: str =
                     {"seed": seed, "episode": episode, "condition": name, **m},
                     eval_fieldnames,
                 )
+            if metrics_by_cond["stable"]["success_rate"] > best_stable_success:
+                best_stable_success = metrics_by_cond["stable"]["success_rate"]
+                save_sr_checkpoint(model, target_model, optimizer,
+                                   tag=f"sr_seed{seed}_best", out_dir=model_dir)
+                print(f"  -> new best stable success={best_stable_success:.2f}, saved sr_seed{seed}_best.pt")
 
     save_sr_checkpoint(model, target_model, optimizer, tag=f"sr_seed{seed}_stable_pretrain", out_dir=model_dir)
-    return model, target_model, eval_envs
+    print(f"[SR seed={seed}] best_stable_success={best_stable_success:.2f}")
+    return model, target_model, eval_envs, best_stable_success
 
 
 def run_sr_adaptation(
@@ -360,10 +367,18 @@ def train():
 
     for seed in SEEDS:
         print(f"\n========== SR seed={seed} ==========")
-        model, target_model, eval_envs = run_stable_training(seed, csv_dir, model_dir, device)
+        model, target_model, eval_envs, best_stable_success = run_stable_training(
+            seed, csv_dir, model_dir, device)
 
-        # Snapshot stable pretrain state; reload before each adaptation so
-        # adaptation phases do not contaminate each other.
+        # Load best-checkpoint weights for adaptation if one was saved; otherwise
+        # fall back to final. This mirrors what the Replay script does and avoids
+        # carrying a late-training regression into the adaptation phase.
+        best_path = model_dir / f"sr_seed{seed}_best.pt"
+        if best_path.exists() and best_stable_success > 0:
+            ck = torch.load(best_path, map_location=device)
+            model.load_state_dict(ck["model_state_dict"])
+            target_model.load_state_dict(ck["target_model_state_dict"])
+            print(f"[SR seed={seed}] loaded best checkpoint (stable={best_stable_success:.2f}) for adaptation")
         stable_state = {
             "model": {k: v.clone() for k, v in model.state_dict().items()},
             "target": {k: v.clone() for k, v in target_model.state_dict().items()},

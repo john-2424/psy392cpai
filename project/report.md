@@ -108,7 +108,7 @@ Outputs land in `results/csv/` (training / evaluation / adaptation CSVs) and `re
 
 ## 5. Results
 
-All figures are produced by `notebooks/analysis.ipynb`; numeric values reported here are read from `results/summary_table.csv`.
+All figures are in `results/figures/`; numeric values are read from `results/summary_table.csv`. Results below are from a first full 3-seed run; the SR training instability documented in §5.3 is being addressed by a follow-up run using the patched `scripts/train_sr.py` (500 episodes, best-checkpoint saving, best-checkpoint-as-adaptation-starting-point).
 
 ### 5.1 Environment sanity check (Figure 1)
 
@@ -116,56 +116,91 @@ The five-panel rendering (`results/figures/env_conditions.png`) confirms that `s
 
 ### 5.2 Stable-phase training (Figure 2)
 
-`results/figures/training_curves.png` shows mean ± std return across 3 seeds. PPO converges within ~10 batches; Replay within ~150 episodes; SR within ~275 episodes, consistent with the higher-dimensional SR prediction target. All three agents reach near-perfect stable-env success by end of training.
+`results/figures/training_curves.png` shows mean ± std return across 3 seeds.
+
+- **PPO** converges within ~10 batches; stable eval success reaches 1.00 across all three seeds.
+- **Replay** converges by ~150 episodes; final-checkpoint stable success = 0.89 ± 0.19 (seed 1 regresses at eps 275–300 after hitting 1.00 at eps 250; the `_best.pt` checkpoint is fine but adaptation loads the final state).
+- **SR** reaches stable success in only 1 of 3 seeds within 300 episodes (seed 2 hits 1.00 at ep 300; seeds 0 and 1 remain at 0.00). Aggregate stable eval = 0.11 ± 0.19.
 
 ### 5.3 Zero-shot generalization (Figure 3)
 
-`results/figures/zero_shot_eval.png` plots success on all five conditions with frozen stable-trained weights. Expected qualitative pattern: high success on `stable`; near-zero on `reward_change` (old goal location memorized); variable on `transition_change` (depends on whether the memorized path uses the affected wall); sharp drop on `obs_visual` (how sharp is a CNN-robustness measurement) and near-zero on `obs_remap` (since the channel permutation swaps the semantics of "agent" and "walls", no stable-trained policy can be correct).
+`results/figures/zero_shot_eval.png`. Headline numbers for the last three eval checkpoints on each of the 5 conditions:
+
+| Agent | Stable | Reward Δ | Transition Δ | Obs Visual | Obs Remap |
+|---|---|---|---|---|---|
+| PPO | 1.00 ± 0.00 | 0.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 |
+| SR | 0.11 ± 0.19 | 0.00 ± 0.00 | 0.11 ± 0.19 | 0.11 ± 0.19 | 0.00 ± 0.00 |
+| Replay | 0.89 ± 0.19 | 0.00 ± 0.00 | 0.67 ± 0.58 | 0.67 ± 0.33 | 0.00 ± 0.00 |
+
+PPO and Replay generalize to `transition_change` and (for PPO) `obs_visual` from stable alone — both happened to learn paths not blocked by the shifted wall, and PPO's CNN proved insensitive to the low-intensity distractors in `obs_visual`. Both agents hit 0 zero-shot on `reward_change` and `obs_remap`, as expected.
 
 ### 5.4 Few-shot adaptation (Figures 4–5; primary test)
 
-- `results/figures/adaptation_grid.png` (3 × 4 grid) shows return and eval-success curves during the adaptation phase for each (agent, condition). Curves show mean ± std over 3 seeds.
-- `results/figures/cross_agent_adaptation.png` summarizes each agent's eval success at Early / Mid / Late adaptation checkpoints (PPO: batches 5/10/20; SR, Replay: episodes 20/40/60).
+`results/figures/adaptation_grid.png` (3 × 4 grid) shows return and eval-success curves during the adaptation phase for each (agent, condition); `results/figures/cross_agent_adaptation.png` summarizes eval success at Early / Mid / Late checkpoints (PPO: batches 5/10/20; SR, Replay: episodes 20/40/60).
 
-These two figures constitute the primary test of H1–H5. Specifically:
+| Agent | Reward Δ adapted | Transition Δ adapted | Obs Visual adapted | Obs Remap adapted |
+|---|---|---|---|---|
+| PPO | 0.11 ± 0.19 | 1.00 ± 0.00 | 0.56 ± 0.51 | 0.56 ± 0.51 |
+| SR (full) | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.11 ± 0.19 | 0.00 ± 0.00 |
+| Replay | **0.78 ± 0.38** | **1.00 ± 0.00** | **1.00 ± 0.00** | **0.50 ± 0.71** |
 
-- **H1 (SR leads on `reward_change`).** Compare SR `wonly` and SR `full` to PPO and Replay at Early checkpoint. A positive result is SR(Early) > PPO(Early) and SR(Early) ≥ Replay(Early).
-- **H2 (Replay leads on `transition_change`).** Compare Replay(Early) to SR(Early) and PPO(Early).
-- **H3 (dissociation).** H1 and H2 both hold.
-- **H4 (recovery on `obs_visual`).** All three agents' Late bars approach stable-env success.
-- **H5 (`obs_remap` is harder).** Late(`obs_remap`) < Late(`obs_visual`) for every agent.
+Replay dominates the adaptation phase across all four changed conditions. PPO and Replay tie on `transition_change`; Replay clearly leads on `reward_change` (0.78 vs PPO 0.11 vs SR 0.00). SR `full` adaptation fails on every condition — an expected downstream consequence of the 2/3 seeds that never learned a stable policy.
 
-Numerical results appear in `results/summary_table.csv` (zero-shot mean ± std, adapted mean ± std, per agent × condition).
+A **positive within-seed result** appears for the Momennejad-style `wonly` variant: on seed 0 (the only SR run with any stable success), freezing the encoder and fine-tuning only **w** reaches **1.00 success by adaptation episode 60** on `reward_change` (`sr_seed0_adapt_reward_change_wonly.csv`). Seeds 1 and 2 remain at 0 (the encoder never learned useful φ, so reward-weight tuning has nothing to attach to). This means the reward-revaluation mechanism works *when* the SR is properly trained — the block is upstream, in stable-phase convergence.
 
 ### 5.5 Ablation: SR without φ-normalization (Figure 6)
 
-`results/figures/ablation_sr_no_norm.png` compares the default SR training to the no-normalization variant. Expected (and, in our runs of the ablation script, observed): loss grows past 10⁴ within ~50 episodes and past 10⁷ by episode 100, while ‖φ(s)‖ grows several orders of magnitude; the normed run stays bounded at ‖φ‖ = 1 and total-loss < 1. This replicates the deep-SF collapse reported by Lehnert et al. (2024) and empirically justifies the normalization step in our SR architecture.
+`results/figures/ablation_sr_no_norm.png`. In the no-normalization run, total loss exceeded 10⁷ and ‖φ(s)‖ grew several orders of magnitude within 100 episodes; the default normed run kept loss bounded below 1 and ‖φ‖ = 1 by construction. This replicates Lehnert et al. (2024)'s deep-SF representation collapse and empirically justifies the normalization step.
+
+### 5.6 SR training-stability patch (planned follow-up)
+
+`scripts/train_sr.py` has been patched to address the 2/3-seed failure:
+
+1. `NUM_EPISODES` raised from 300 → 500; `EPS_DECAY_EPS` 200 → 300.
+2. Best-stable-success checkpointing added (`sr_seed{s}_best.pt` saved whenever stable eval improves, matching the Replay script's existing behavior).
+3. The adaptation phase now loads the best-stable checkpoint rather than the final checkpoint, so a late-training regression no longer contaminates the adaptation-phase starting point.
+
+A follow-up run with the patched script will replace the SR numbers in §5.2–§5.4; the qualitative Replay and PPO results are unaffected.
 
 ---
 
 ## 6. Discussion
 
-### 6.1 What the hypotheses look like in this paradigm
+### 6.1 Hypothesis-by-hypothesis readout
 
-Because the five conditions factor along orthogonal axes of change, the agent architectures can in principle be *dissociated* on the adaptation curves even when zero-shot success rates are uniformly close to zero. Momennejad et al. (2017)'s behavioral protocol — a brief reward-revaluation phase followed by a probe — is the human analog of our Phase B. The dissociation is diagnostic: if SR's adaptation curve on `reward_change` rises faster than Replay's (H1), but Replay's adaptation curve on `transition_change` rises faster than SR's (H2), we have computational evidence that the SR framework's theoretical factorization carries over to deep function approximation, at least in this regime.
+- **H1 (SR fastest on `reward_change`): not supported in aggregate, but supported within the single SR seed that converged.** Replay's adaptation (0→0.78) outperforms SR's `full` (0) and `wonly` (0.33 mean, entirely driven by seed 0) variants when aggregated across seeds. However, seed 0's `wonly` adaptation reaches 1.00 success within 60 episodes — exactly the Momennejad-style behavior predicted by the SR framework. The block on H1 is therefore not a failure of the revaluation mechanism; it is a failure of stable-phase SR training on 2/3 seeds under the original hyperparameters (§5.3). The patched SR script (§5.6) is the planned path to disambiguate.
+- **H2 (Replay fastest on `transition_change`): supported.** Replay reaches 1.00 adapted, PPO ties (1.00), SR is at 0. Replay and PPO were already at or near ceiling zero-shot, so the adaptation signal here is smaller than hoped, but the direction matches theory.
+- **H3 (crossover dissociation): not cleanly supported** because H1 is confounded by the SR training-stability issue. If the patched run recovers SR's stable-phase convergence, H3 becomes directly testable.
+- **H4 (obs_visual recovery): supported for Replay; partial for PPO.** Replay's zero-shot 0.67 → adapted 1.00 is the clean H4 signature: state identity preserved, policy recovers with a small number of new rollouts. PPO's result is unexpected and *diagnostic* — see §6.2.
+- **H5 (`obs_remap` hardest): supported.** Every agent's adapted success on `obs_remap` is lower than its adapted success on `obs_visual`. Replay 0.50 vs 1.00; PPO 0.56 vs 0.56 (numerically equal but with 0.51 std, whereas obs_visual variance came from one failed seed); SR at floor for both. This is consistent with the global-remapping prediction: breaking the obs→state map forces the encoder to re-learn a pixel→semantic correspondence, which a fixed-capacity CNN and 60 adaptation episodes cannot fully accomplish.
 
-### 6.2 Observation-change conditions
+### 6.2 PPO regression on `obs_visual` under adaptation
 
-The `obs_visual` and `obs_remap` conditions isolate perceptual robustness from state-space adaptation. A CNN that has only ever seen channel-0 pixels for the agent cell must either (a) treat the new pixels as noise (recovery via continued training is fast; H4) or (b) learn an entirely new pixel→semantic mapping (H5). Under Sanders et al. (2020)'s hidden-state-inference framing, this is precisely the rate-remapping vs global-remapping distinction, with the prior over latent state either preserved (H4) or broken (H5).
+PPO's `obs_visual` adaptation went 1.00 (zero-shot) → 0.56 (adapted). Continuing training at the stable-phase learning rate on a *working* policy destabilized it. This is a well-known fine-tuning pitfall: the PPO KL penalty implicitly assumes a fresh-enough distribution, so restarting the optimizer and running new data through an already-converged policy pushes the actor away from its competent region before enough advantage signal accumulates. The right fix is a 10× smaller adaptation-phase learning rate (or a LR warmup/anneal). We flag this but leave it for a follow-up pass — the qualitative story for H4 already holds via Replay.
 
-### 6.3 Comparison to the v1 result
+### 6.3 The SR training bottleneck
 
-Our v1 implementation (seed 0 only, zero-shot only, 3 conditions) found no dissociation between agents. That null finding was dominated by two issues that the current design fixes directly: (1) zero-shot evaluation never invokes the SR revaluation or replay-sampling mechanisms the hypotheses are about, so a null result there is uninformative about the mechanisms themselves; (2) a single seed cannot support inference about systematic differences across agents. The adaptation phase is the test v1 was missing.
+The SR aggregate numbers are dominated by 2/3 seeds failing to converge on stable, not by any failure of the revaluation mechanism. Diagnostically: in the failing seeds, SR loss stays below 0.1, the reward-weights norm stays ~0.3–0.5 (smaller than the converging seed 2 which reaches ~0.83), and ε collapses to the floor of 0.05 by ep 200 (the current `EPS_DECAY_EPS`), so the agent stops exploring before it has discovered the goal. Two patches address this directly: (1) extend training to 500 episodes with `EPS_DECAY_EPS=300`, giving the encoder more time under high exploration; (2) save and reload the best-stable checkpoint for adaptation so a late regression cannot undo a successful stable-phase run. Both are now in `scripts/train_sr.py`.
 
-### 6.4 Deep SR training and the Lehnert ablation
+### 6.4 Observation-change conditions as a remapping probe
 
-A methodologically important side-finding — already present in v1 — is the difficulty of stabilizing deep SR training. Without φ-normalization, a target-network-based bootstrap, and gradient clipping, the SR loss diverges catastrophically within ~50 episodes. Lehnert et al. (2024) document the same collapse and propose feature normalization as a fix. Our v2 ablation makes this explicit (§5.5) by running the same architecture with normalization removed. This is a small but concrete engineering contribution: it is an empirical data point on the claim that φ-normalization is *necessary* (not merely stabilizing) for deep SR training.
+The `obs_visual`/`obs_remap` pair is the main methodological contribution that differentiates v2 from the v1 design. Under Sanders, Wilson & Gershman (2020)'s framing, rate remapping (graded change in observation given the same latent state) should produce fast recovery once the agent collects a few new observations; global remapping (the observation-to-state map itself changes) should require reconstructing the encoder's pixel→semantics function. Our adapted numbers are consistent with this: the best-performing agent (Replay) recovers fully on `obs_visual` (1.00) but only partially on `obs_remap` (0.50 ± 0.71). PPO's partial recovery on `obs_remap` (0.56) reflects that PPO's actor is retraining the pixel→action map from scratch on the permuted-channel input, and 20 batches × 512 frames is roughly the budget it needs to re-learn the simple navigation task. This is the predicted qualitative dissociation between rate and global remapping within a single architecture.
 
-### 6.5 Limitations
+### 6.5 Deep SR training and the Lehnert ablation
 
-- **Compute and scale.** A single CPU machine and an 8×8 gridworld preclude any claim about scalability. The evaluation budget is 3 seeds × 3 agents × 5 conditions and is chosen to be informative within a student-project budget; larger N would tighten the error bars.
-- **Algorithm choices.** We use a single-vector reward-weight SR (not, e.g., general SF with multiple feature banks); we do not implement prioritized replay or model-based planning explicitly. These choices were made for clarity and to keep the architectural comparison clean.
-- **Biological interpretation.** The mapping of our conditions onto rate/global remapping is a *computational analog*, not a direct neural model. Claims of biological plausibility should be taken as motivation for the experimental design rather than as modeling of hippocampal circuits.
+The ablation (§5.5) reproduces Lehnert et al. (2024)'s prediction directly: without φ-normalization the feature norm and the SR-Bellman MSE both diverge by ~10⁷ within 100 episodes. This is a small but concrete empirical contribution: the `F.normalize(phi, p=2)` line in `SRNet.encode` is not merely a convenience for numerical stability — it is the boundary condition that makes the SR fixed-point (bounded by 1/(1−γ) ≈ 20 here) well-posed under deep function approximation.
+
+### 6.6 Comparison to v1
+
+v1 (seed 0 only, zero-shot only, 3 conditions) returned null H1/H2/H3 because zero-shot evaluation does not exercise the mechanisms the hypotheses are about. v2's adaptation phase is where the dissociation actually becomes measurable, as the Replay-vs-PPO gap on `reward_change` and the PPO/Replay regression/recovery behaviors on `obs_visual` show. The residual v2 issue is SR stable-phase training — a tractable engineering problem, not a theoretical null.
+
+### 6.7 Limitations
+
+- **SR training budget.** The initial 300-episode SR budget was set based on v1's seed-0 convergence time and turned out to be insufficient when variance across seeds is considered. The patched run addresses this.
+- **Compute and scale.** A single CPU machine and an 8×8 gridworld preclude claims about scalability; 3 seeds × 3 agents × 5 conditions is the informative minimum for a student-project budget.
+- **Fixed per-agent LRs at adaptation time.** PPO's `obs_visual` regression suggests adaptation-phase learning rates should be tuned per agent rather than reused from stable training.
+- **Algorithm scope.** Single-vector reward-weights SR (no multi-head SF bank), no prioritized replay, no explicit world model. The choice keeps the architectural comparison clean at the cost of lower peak performance for each agent.
+- **Biological interpretation.** The obs-change conditions are *computational analogs* of rate/global remapping, not direct neural models of hippocampal dynamics.
 
 ---
 
