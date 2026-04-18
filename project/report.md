@@ -108,7 +108,7 @@ Outputs land in `results/csv/` (training / evaluation / adaptation CSVs) and `re
 
 ## 5. Results
 
-All figures are in `results/figures/`; numeric values are read from `results/summary_table.csv`. Results below are from a first full 3-seed run; the SR training instability documented in §5.3 is being addressed by a follow-up run using the patched `scripts/train_sr.py` (500 episodes, best-checkpoint saving, best-checkpoint-as-adaptation-starting-point).
+All figures are in `results/figures/`; numeric values are read from `results/summary_table.csv`. Reported SR numbers are from the patched training run (500 episodes, best-stable checkpointing). PPO and Replay numbers are from the baseline 3-seed run (their training was not repeated under the patch, as the patch only touched SR).
 
 ### 5.1 Environment sanity check (Figure 1)
 
@@ -120,7 +120,7 @@ The five-panel rendering (`results/figures/env_conditions.png`) confirms that `s
 
 - **PPO** converges within ~10 batches; stable eval success reaches 1.00 across all three seeds.
 - **Replay** converges by ~150 episodes; final-checkpoint stable success = 0.89 ± 0.19 (seed 1 regresses at eps 275–300 after hitting 1.00 at eps 250; the `_best.pt` checkpoint is fine but adaptation loads the final state).
-- **SR** reaches stable success in only 1 of 3 seeds within 300 episodes (seed 2 hits 1.00 at ep 300; seeds 0 and 1 remain at 0.00). Aggregate stable eval = 0.11 ± 0.19.
+- **SR** fails to reach non-zero greedy-eval success on any of the 3 seeds across all eval checkpoints through episode 500 (aggregate stable eval = 0.00 ± 0.00). This is not a duration problem: SR-loss magnitudes are stable (~0.01–0.15), reward-weights norms grow as expected (seed 0 reaches ~1.02, seed 1 ~0.93, seed 2 ~0.76), and φ-norm is held at 1 by normalization. The failure mode is specifically in *policy extraction* under greedy argmax — see §6.3.
 
 ### 5.3 Zero-shot generalization (Figure 3)
 
@@ -129,10 +129,10 @@ The five-panel rendering (`results/figures/env_conditions.png`) confirms that `s
 | Agent | Stable | Reward Δ | Transition Δ | Obs Visual | Obs Remap |
 |---|---|---|---|---|---|
 | PPO | 1.00 ± 0.00 | 0.00 ± 0.00 | 1.00 ± 0.00 | 1.00 ± 0.00 | 0.00 ± 0.00 |
-| SR | 0.11 ± 0.19 | 0.00 ± 0.00 | 0.11 ± 0.19 | 0.11 ± 0.19 | 0.00 ± 0.00 |
+| SR | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 |
 | Replay | 0.89 ± 0.19 | 0.00 ± 0.00 | 0.67 ± 0.58 | 0.67 ± 0.33 | 0.00 ± 0.00 |
 
-PPO and Replay generalize to `transition_change` and (for PPO) `obs_visual` from stable alone — both happened to learn paths not blocked by the shifted wall, and PPO's CNN proved insensitive to the low-intensity distractors in `obs_visual`. Both agents hit 0 zero-shot on `reward_change` and `obs_remap`, as expected.
+PPO and Replay generalize to `transition_change` and (for PPO) `obs_visual` from stable alone — both happened to learn paths not blocked by the shifted wall, and PPO's CNN proved insensitive to the low-intensity distractors in `obs_visual`. Both agents hit 0 zero-shot on `reward_change` and `obs_remap`, as expected. SR is at the 0.0 floor on every condition, reflecting the stable-phase policy-extraction failure (§5.2).
 
 ### 5.4 Few-shot adaptation (Figures 4–5; primary test)
 
@@ -141,26 +141,26 @@ PPO and Replay generalize to `transition_change` and (for PPO) `obs_visual` from
 | Agent | Reward Δ adapted | Transition Δ adapted | Obs Visual adapted | Obs Remap adapted |
 |---|---|---|---|---|
 | PPO | 0.11 ± 0.19 | 1.00 ± 0.00 | 0.56 ± 0.51 | 0.56 ± 0.51 |
-| SR (full) | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.11 ± 0.19 | 0.00 ± 0.00 |
+| SR (full) | 0.22 ± 0.19 | 0.22 ± 0.38 | 0.11 ± 0.19 | 0.00 ± 0.00 |
 | Replay | **0.78 ± 0.38** | **1.00 ± 0.00** | **1.00 ± 0.00** | **0.50 ± 0.71** |
 
-Replay dominates the adaptation phase across all four changed conditions. PPO and Replay tie on `transition_change`; Replay clearly leads on `reward_change` (0.78 vs PPO 0.11 vs SR 0.00). SR `full` adaptation fails on every condition — an expected downstream consequence of the 2/3 seeds that never learned a stable policy.
+Replay dominates the adaptation phase across all four changed conditions. PPO and Replay tie on `transition_change`; Replay clearly leads on `reward_change` (0.78 vs PPO 0.11 vs SR-full 0.22). SR-full adaptation now produces non-zero success on `reward_change` and `transition_change` — a qualitative shift from the pre-patch run — but lags Replay. Per-seed max eval-success during adaptation (a looser readout than the end-of-phase mean the summary uses): SR reaches 1.00 on `reward_change_full` for seeds 0 and 1, 1.00 on `transition_change_full` for seed 0, and 1.00 on `obs_visual_full` for all three seeds, before regressing in later adaptation episodes. So the SR representation is not useless: fine-tuning from the stable-phase checkpoint reliably passes through a success regime, but does not settle there under the current adaptation hyperparameters.
 
-A **positive within-seed result** appears for the Momennejad-style `wonly` variant: on seed 0 (the only SR run with any stable success), freezing the encoder and fine-tuning only **w** reaches **1.00 success by adaptation episode 60** on `reward_change` (`sr_seed0_adapt_reward_change_wonly.csv`). Seeds 1 and 2 remain at 0 (the encoder never learned useful φ, so reward-weight tuning has nothing to attach to). This means the reward-revaluation mechanism works *when* the SR is properly trained — the block is upstream, in stable-phase convergence.
+The Momennejad-style `wonly` variant (freeze encoder, fit only the reward-weights **w**) reaches **1.00 success by adaptation episode 60** on `reward_change` for seed 2 (`sr_seed2_adapt_reward_change_wonly.csv`); seeds 0 and 1 remain at 0. This within-seed result is the cleanest positive evidence for SR-based reward revaluation in the experiment — it shows the revaluation mechanism itself is functional when the encoder's **φ** happens to be aligned with goal structure; it is sensitive to the same upstream representation quality that drags down the aggregate.
 
 ### 5.5 Ablation: SR without φ-normalization (Figure 6)
 
 `results/figures/ablation_sr_no_norm.png`. In the no-normalization run, total loss exceeded 10⁷ and ‖φ(s)‖ grew several orders of magnitude within 100 episodes; the default normed run kept loss bounded below 1 and ‖φ‖ = 1 by construction. This replicates Lehnert et al. (2024)'s deep-SF representation collapse and empirically justifies the normalization step.
 
-### 5.6 SR training-stability patch (planned follow-up)
+### 5.6 SR training-stability patch (outcome)
 
-`scripts/train_sr.py` has been patched to address the 2/3-seed failure:
+`scripts/train_sr.py` was patched as follows and rerun end-to-end (3 seeds, 500 episodes each):
 
-1. `NUM_EPISODES` raised from 300 → 500; `EPS_DECAY_EPS` 200 → 300.
-2. Best-stable-success checkpointing added (`sr_seed{s}_best.pt` saved whenever stable eval improves, matching the Replay script's existing behavior).
-3. The adaptation phase now loads the best-stable checkpoint rather than the final checkpoint, so a late-training regression no longer contaminates the adaptation-phase starting point.
+1. `NUM_EPISODES` raised from 300 → 500; `EPS_DECAY_EPS` 200 → 300 (more wall-clock under high ε).
+2. Best-stable-success checkpointing added (`sr_seed{s}_best.pt` saved whenever stable greedy-eval success improves, matching the Replay script's existing behavior).
+3. The adaptation phase now loads the best-stable checkpoint rather than the final checkpoint.
 
-A follow-up run with the patched script will replace the SR numbers in §5.2–§5.4; the qualitative Replay and PPO results are unaffected.
+**Outcome:** extending the budget did *not* recover greedy stable-phase success on any of the 3 seeds (all eval checkpoints through ep 500 report 0.0 success). The `best.pt` files were saved as expected by the guard on `-1.0`, but none of them achieved strictly positive stable success. However, the patched run materially improved adaptation-phase outcomes: SR-full adaptation on `reward_change` went from 0.00 ± 0.00 (pre-patch) to 0.22 ± 0.19, and SR-full adaptation on `transition_change` went from 0.00 ± 0.00 to 0.22 ± 0.38. This tells us the representations learned under the 500-episode budget are usable enough that fine-tuning them briefly is sometimes sufficient to reach the goal, even though the stable-phase greedy policy itself never stabilizes there. §6.3 discusses the diagnosis.
 
 ---
 
@@ -168,9 +168,9 @@ A follow-up run with the patched script will replace the SR numbers in §5.2–�
 
 ### 6.1 Hypothesis-by-hypothesis readout
 
-- **H1 (SR fastest on `reward_change`): not supported in aggregate, but supported within the single SR seed that converged.** Replay's adaptation (0→0.78) outperforms SR's `full` (0) and `wonly` (0.33 mean, entirely driven by seed 0) variants when aggregated across seeds. However, seed 0's `wonly` adaptation reaches 1.00 success within 60 episodes — exactly the Momennejad-style behavior predicted by the SR framework. The block on H1 is therefore not a failure of the revaluation mechanism; it is a failure of stable-phase SR training on 2/3 seeds under the original hyperparameters (§5.3). The patched SR script (§5.6) is the planned path to disambiguate.
-- **H2 (Replay fastest on `transition_change`): supported.** Replay reaches 1.00 adapted, PPO ties (1.00), SR is at 0. Replay and PPO were already at or near ceiling zero-shot, so the adaptation signal here is smaller than hoped, but the direction matches theory.
-- **H3 (crossover dissociation): not cleanly supported** because H1 is confounded by the SR training-stability issue. If the patched run recovers SR's stable-phase convergence, H3 becomes directly testable.
+- **H1 (SR fastest on `reward_change`): not supported in aggregate, partially supported within seeds.** Replay's adaptation (0 → 0.78) outperforms SR-full (0.22) and SR-wonly (seed 2 only) when aggregated. Within seeds, SR-full reaches 1.00 on seeds 0 and 1 at some adaptation checkpoint before regressing, and SR-wonly on seed 2 reaches 1.00 by episode 60 — the Momennejad-style signature. The aggregate is suppressed partly by the instability of the stable-phase representation (§6.3) and partly by adaptation-phase policy collapse (§6.2). Net: the SR mechanism is detectable but not dominant in this setup.
+- **H2 (Replay fastest on `transition_change`): supported.** Replay reaches 1.00 adapted, PPO ties (1.00), SR is at 0.22. Replay and PPO were already at or near ceiling zero-shot, so the adaptation signal here is smaller than hoped, but the direction matches theory.
+- **H3 (crossover dissociation): not supported.** The predicted ordering is SR > Replay on `reward_change` and Replay > SR on `transition_change`. Observed: Replay > SR on both. A crossover exists within the SR column (reward 0.22 ≈ transition 0.22) vs Replay (reward 0.78 < transition 1.00), but the absolute ordering on both conditions is the same (Replay > SR). So the dissociation predicted by the literature does not manifest at the population level here.
 - **H4 (obs_visual recovery): supported for Replay; partial for PPO.** Replay's zero-shot 0.67 → adapted 1.00 is the clean H4 signature: state identity preserved, policy recovers with a small number of new rollouts. PPO's result is unexpected and *diagnostic* — see §6.2.
 - **H5 (`obs_remap` hardest): supported.** Every agent's adapted success on `obs_remap` is lower than its adapted success on `obs_visual`. Replay 0.50 vs 1.00; PPO 0.56 vs 0.56 (numerically equal but with 0.51 std, whereas obs_visual variance came from one failed seed); SR at floor for both. This is consistent with the global-remapping prediction: breaking the obs→state map forces the encoder to re-learn a pixel→semantic correspondence, which a fixed-capacity CNN and 60 adaptation episodes cannot fully accomplish.
 
@@ -180,7 +180,7 @@ PPO's `obs_visual` adaptation went 1.00 (zero-shot) → 0.56 (adapted). Continui
 
 ### 6.3 The SR training bottleneck
 
-The SR aggregate numbers are dominated by 2/3 seeds failing to converge on stable, not by any failure of the revaluation mechanism. Diagnostically: in the failing seeds, SR loss stays below 0.1, the reward-weights norm stays ~0.3–0.5 (smaller than the converging seed 2 which reaches ~0.83), and ε collapses to the floor of 0.05 by ep 200 (the current `EPS_DECAY_EPS`), so the agent stops exploring before it has discovered the goal. Two patches address this directly: (1) extend training to 500 episodes with `EPS_DECAY_EPS=300`, giving the encoder more time under high exploration; (2) save and reload the best-stable checkpoint for adaptation so a late regression cannot undo a successful stable-phase run. Both are now in `scripts/train_sr.py`.
+The patched 500-episode run falsifies our initial hypothesis that SR was duration-limited. All three seeds show well-behaved SR-Bellman optimization — loss stays bounded below ~0.15, reward-weights-norm grows monotonically, φ is held at unit norm — yet greedy `argmax_a (φᵀw)` never produces a goal-reaching rollout during evaluation. The bottleneck is therefore specifically in **policy extraction**: the representation is being shaped, but not in a way that aligns `argmax_a Q(s,a)` with reaching the goal under deterministic rollouts. Two mechanisms are consistent with this: (i) reward weights **w** may be learning a direction in feature space that is *predictive* of returns without being *action-discriminative* — the optimal action's Q-margin can be razor-thin even when Q-values are approximately correct; (ii) the CNN encoder's single forward pass on distinct states may produce nearly-colinear φ under L2 normalization, collapsing the action-Q contrast. That adaptation works *at all* from these "failed" checkpoints (SR-full 0.22 on reward_change and transition_change) supports (i) over (ii) — some goal-relevant structure is present, it just does not survive greedy evaluation without further tuning. Follow-ups that might diagnose this further: action-conditioned successor features (separate φ per action), a softmax-over-Q stochastic evaluation, or a value-head regularizer that forces Q-margin between the best and second-best actions.
 
 ### 6.4 Observation-change conditions as a remapping probe
 
@@ -192,11 +192,11 @@ The ablation (§5.5) reproduces Lehnert et al. (2024)'s prediction directly: wit
 
 ### 6.6 Comparison to v1
 
-v1 (seed 0 only, zero-shot only, 3 conditions) returned null H1/H2/H3 because zero-shot evaluation does not exercise the mechanisms the hypotheses are about. v2's adaptation phase is where the dissociation actually becomes measurable, as the Replay-vs-PPO gap on `reward_change` and the PPO/Replay regression/recovery behaviors on `obs_visual` show. The residual v2 issue is SR stable-phase training — a tractable engineering problem, not a theoretical null.
+v1 (seed 0 only, zero-shot only, 3 conditions) returned null H1/H2/H3 because zero-shot evaluation does not exercise the mechanisms the hypotheses are about. v2's adaptation phase is where dissociation actually becomes measurable, as the Replay-vs-PPO gap on `reward_change` and the PPO/Replay regression/recovery behaviors on `obs_visual` show. The residual v2 issue is SR *policy extraction*, not SR training per se — the patched 500-episode run with best-checkpoint saving confirmed that extending duration does not recover greedy-eval success, which reframes the SR contribution as an honest negative result on the deep-SR *architecture* rather than on the *hypothesis*.
 
 ### 6.7 Limitations
 
-- **SR training budget.** The initial 300-episode SR budget was set based on v1's seed-0 convergence time and turned out to be insufficient when variance across seeds is considered. The patched run addresses this.
+- **SR policy extraction.** The patched 500-episode run shows the bottleneck is not training budget but the greedy policy derived from the deep-SR Q estimate. Fixing this likely requires a per-action feature design or a Q-margin regularizer, which is out of scope for this iteration.
 - **Compute and scale.** A single CPU machine and an 8×8 gridworld preclude claims about scalability; 3 seeds × 3 agents × 5 conditions is the informative minimum for a student-project budget.
 - **Fixed per-agent LRs at adaptation time.** PPO's `obs_visual` regression suggests adaptation-phase learning rates should be tuned per agent rather than reused from stable training.
 - **Algorithm scope.** Single-vector reward-weights SR (no multi-head SF bank), no prioritized replay, no explicit world model. The choice keeps the architectural comparison clean at the cost of lower peak performance for each agent.
