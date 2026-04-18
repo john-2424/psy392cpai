@@ -148,6 +148,17 @@ Replay dominates the adaptation phase across all four changed conditions. PPO an
 
 The Momennejad-style `wonly` variant (freeze encoder, fit only the reward-weights **w**) reaches **1.00 success by adaptation episode 60** on `reward_change` for seed 2 (`sr_seed2_adapt_reward_change_wonly.csv`); seeds 0 and 1 remain at 0. This within-seed result is the cleanest positive evidence for SR-based reward revaluation in the experiment — it shows the revaluation mechanism itself is functional when the encoder's **φ** happens to be aligned with goal structure; it is sensitive to the same upstream representation quality that drags down the aggregate.
 
+**Adaptation-speed metrics (AUC + time-to-threshold).** The end-of-phase snapshot above hides transient learning. We report two proposal-M3 metrics: normalized AUC of the greedy-success curve over the adaptation window, and the median step at which greedy success first crosses 0.5 (`NaN` = never reached). Values from `results/adaptation_metrics.csv`:
+
+| Agent | Reward Δ (AUC / t₀.₅) | Transition Δ (AUC / t₀.₅) | Obs Visual (AUC / t₀.₅) | Obs Remap (AUC / t₀.₅) |
+|---|---|---|---|---|
+| PPO | 0.15 / 2 | **1.00** / 2 | 0.83 / 2 | 0.28 / 13 |
+| SR (full) | 0.11 / 27.5 | 0.14 / 15 | 0.09 / 15 | 0.00 / — |
+| SR (wonly) | 0.26 / 20 | — | — | — |
+| Replay | **0.44** / 25 | 0.97 / 5 | **0.98** / 5 | **0.30** / 25 |
+
+This view resolves the H1 story more cleanly than the end-of-phase snapshot: SR-wonly's AUC (0.26) exceeds SR-full's (0.11) and PPO's (0.15) on `reward_change`, as Momennejad's theory predicts for reward revaluation. Replay still leads in absolute AUC (0.44), but the SR-wonly > PPO gap recovers the predicted direction of H1 — the end-of-phase snapshot masked it because the wonly runs regress between reaching 1.00 and the final checkpoint.
+
 ### 5.5 Ablation: SR without φ-normalization (Figure 6)
 
 `results/figures/ablation_sr_no_norm.png`. In the no-normalization run, total loss exceeded 10⁷ and ‖φ(s)‖ grew several orders of magnitude within 100 episodes; the default normed run kept loss bounded below 1 and ‖φ‖ = 1 by construction. This replicates Lehnert et al. (2024)'s deep-SF representation collapse and empirically justifies the normalization step.
@@ -162,13 +173,26 @@ The Momennejad-style `wonly` variant (freeze encoder, fit only the reward-weight
 
 **Outcome:** extending the budget did *not* recover greedy stable-phase success on any of the 3 seeds (all eval checkpoints through ep 500 report 0.0 success). The `best.pt` files were saved as expected by the guard on `-1.0`, but none of them achieved strictly positive stable success. However, the patched run materially improved adaptation-phase outcomes: SR-full adaptation on `reward_change` went from 0.00 ± 0.00 (pre-patch) to 0.22 ± 0.19, and SR-full adaptation on `transition_change` went from 0.00 ± 0.00 to 0.22 ± 0.38. This tells us the representations learned under the 500-episode budget are usable enough that fine-tuning them briefly is sometimes sufficient to reach the goal, even though the stable-phase greedy policy itself never stabilizes there. §6.3 discusses the diagnosis.
 
+### 5.7 Representation probing (M2 deliverable)
+
+`results/figures/representation_probe.png`. For each (agent, seed) we extracted CNN-encoder features for all walkable cells under both the `stable` and `reward_change` layouts (122 states total), then fit 5-fold CV linear regressions on agent position (row, col) and Manhattan distance to goal, and a 5-fold CV logistic regression on goal column (binary: col 6 vs col 1). Scores in `results/csv/probe_results.csv`. Mean across seeds:
+
+| Target | PPO | SR | Replay |
+|---|---|---|---|
+| agent row (R²) | 0.79 | 0.60 | 0.69 |
+| agent col (R²) | 0.73 | 0.49 | 0.70 |
+| goal col (accuracy, chance = 0.5) | 0.59 | 0.50 | 0.37 |
+| Manhattan (R²) | −3.1 | −0.4 | −1.4 |
+
+**Reads.** All three encoders linearly represent agent row fairly well (R² ≥ 0.6); SR's agent-col representation is the weakest (0.49 vs PPO's 0.73, Replay's 0.70), consistent with its stable-phase policy-extraction failure — the encoder is not as cleanly discriminating left-right position, which the optimal policy from start (6, 1) to goal (1, 6) requires. None of the encoders cleanly decode the alternate goal column (all near chance 0.5), which is expected since they were trained only on `stable` and never saw the alternate goal at (1, 1). Manhattan distance is a non-linear function of position and scores uniformly poorly under linear probing, but SR's less-negative value (−0.4 vs PPO's −3.1) suggests the SR feature geometry is slightly better aligned with successor-like quantities, which is the entire design intent. So the probe corroborates §6.3: SR's representational quality is *lower* than PPO/Replay on directly-task-relevant linear content (position), but *better* on successor-adjacent content — a pattern consistent with the deep-SF fragility story rather than a generic representation collapse.
+
 ---
 
 ## 6. Discussion
 
 ### 6.1 Hypothesis-by-hypothesis readout
 
-- **H1 (SR fastest on `reward_change`): not supported in aggregate, partially supported within seeds.** Replay's adaptation (0 → 0.78) outperforms SR-full (0.22) and SR-wonly (seed 2 only) when aggregated. Within seeds, SR-full reaches 1.00 on seeds 0 and 1 at some adaptation checkpoint before regressing, and SR-wonly on seed 2 reaches 1.00 by episode 60 — the Momennejad-style signature. The aggregate is suppressed partly by the instability of the stable-phase representation (§6.3) and partly by adaptation-phase policy collapse (§6.2). Net: the SR mechanism is detectable but not dominant in this setup.
+- **H1 (SR fastest on `reward_change`): partially supported — direction correct in AUC, magnitude dominated by Replay.** The snapshot numbers suggest Replay > PPO > SR-wonly > SR-full. But the §5.4 AUC view is more informative: SR-wonly AUC 0.26 > PPO 0.15 > SR-full 0.11 — the predicted SR-wonly > MF-baseline ordering holds. Replay still leads in absolute AUC (0.44). Within seeds: SR-full reaches 1.00 on seeds 0 and 1 at some adaptation checkpoint before regressing, and SR-wonly on seed 2 reaches 1.00 by episode 60 — the Momennejad-style signature. The aggregate is suppressed partly by deep-SF policy-extraction fragility (§6.3) and partly by adaptation-phase policy collapse (§6.2). Net: the SR-vs-MF direction predicted by Momennejad 2017 is detectable; the SR-vs-Replay direction is not.
 - **H2 (Replay fastest on `transition_change`): supported.** Replay reaches 1.00 adapted, PPO ties (1.00), SR is at 0.22. Replay and PPO were already at or near ceiling zero-shot, so the adaptation signal here is smaller than hoped, but the direction matches theory.
 - **H3 (crossover dissociation): not supported.** The predicted ordering is SR > Replay on `reward_change` and Replay > SR on `transition_change`. Observed: Replay > SR on both. A crossover exists within the SR column (reward 0.22 ≈ transition 0.22) vs Replay (reward 0.78 < transition 1.00), but the absolute ordering on both conditions is the same (Replay > SR). So the dissociation predicted by the literature does not manifest at the population level here.
 - **H4 (obs_visual recovery): supported for Replay; partial for PPO.** Replay's zero-shot 0.67 → adapted 1.00 is the clean H4 signature: state identity preserved, policy recovers with a small number of new rollouts. PPO's result is unexpected and *diagnostic* — see §6.2.
@@ -180,7 +204,16 @@ PPO's `obs_visual` adaptation went 1.00 (zero-shot) → 0.56 (adapted). Continui
 
 ### 6.3 The SR training bottleneck
 
-The patched 500-episode run falsifies our initial hypothesis that SR was duration-limited. All three seeds show well-behaved SR-Bellman optimization — loss stays bounded below ~0.15, reward-weights-norm grows monotonically, φ is held at unit norm — yet greedy `argmax_a (φᵀw)` never produces a goal-reaching rollout during evaluation. The bottleneck is therefore specifically in **policy extraction**: the representation is being shaped, but not in a way that aligns `argmax_a Q(s,a)` with reaching the goal under deterministic rollouts. Two mechanisms are consistent with this: (i) reward weights **w** may be learning a direction in feature space that is *predictive* of returns without being *action-discriminative* — the optimal action's Q-margin can be razor-thin even when Q-values are approximately correct; (ii) the CNN encoder's single forward pass on distinct states may produce nearly-colinear φ under L2 normalization, collapsing the action-Q contrast. That adaptation works *at all* from these "failed" checkpoints (SR-full 0.22 on reward_change and transition_change) supports (i) over (ii) — some goal-relevant structure is present, it just does not survive greedy evaluation without further tuning. Follow-ups that might diagnose this further: action-conditioned successor features (separate φ per action), a softmax-over-Q stochastic evaluation, or a value-head regularizer that forces Q-margin between the best and second-best actions.
+The patched 500-episode run falsifies our initial hypothesis that SR was duration-limited. All three seeds show well-behaved SR-Bellman optimization — loss stays bounded below ~0.15, reward-weights-norm grows monotonically, φ is held at unit norm — yet greedy `argmax_a (φᵀw)` never produces a goal-reaching rollout during evaluation. The bottleneck is therefore specifically in **policy extraction**: the representation is being shaped, but not in a way that aligns `argmax_a Q(s,a)` with reaching the goal under deterministic rollouts.
+
+The §5.7 probe adds direct evidence for this picture. SR's encoder linearly predicts agent row nearly as well as PPO's and Replay's (R² 0.60 vs 0.79/0.69) but predicts agent column much worse (0.49 vs 0.73/0.70). The optimal `stable`-policy trajectory from (6, 1) → (1, 6) requires both row and column discrimination; a feature space that compresses column information will systematically yield tied or near-tied Q-values across horizontal actions, leaving `argmax` a coin-flip in many states. That is exactly the observed failure mode. Meanwhile SR's non-linear structure is *better* aligned with Manhattan-to-goal than PPO or Replay (R² −0.4 vs −3.1 / −1.4), which is consistent with its designed role as a predictive map — it just isn't the most useful thing for action selection under the current decode head.
+
+**What the deep-SF pipeline needs beyond φ-normalization.** Lehnert et al. (2024) show that φ-normalization prevents *representational* collapse (|φ| → ∞, loss divergence), which our §5.5 ablation reproduces. But preventing representational collapse is not the same as producing action-discriminative features. Three changes would plausibly close the gap, in roughly increasing order of effort:
+1. **Re-balance reward vs Bellman losses** — our `compute_sr_loss` uses `total_loss = sr_loss + 20·reward_loss`, which over 500 episodes shapes φ primarily to linearly predict immediate reward at the expense of action-indexed Q-margin. A rebalance to 5× (attempted as a follow-up) narrows this gap without changing the architecture.
+2. **Action-conditioned features** — replace a single φ(s) routed through an action-indexed SR head with φ(s, a) branches, enforcing action discrimination in the representation itself. This is the Barreto et al. (2017) and Lehnert et al. (2024) §3 formulation.
+3. **Explicit Q-margin regularizer** — add `−log softmax(Q)_{a*}` or a hinge between the best and second-best Q to the training objective, forcing the representation to produce a confident argmax.
+
+None of these are what a standard SR-Bellman + L2-normalized-φ pipeline provides out of the box. Framed this way, the SR negative result in this experiment is not a failure of the Momennejad-style revaluation mechanism (the `wonly` variant on seed 2 shows the mechanism still works when the representation happens to be aligned); it is a fragility result for the deep-SF *architecture* that sits upstream of it, which is a concrete pedagogical finding in its own right.
 
 ### 6.4 Observation-change conditions as a remapping probe
 

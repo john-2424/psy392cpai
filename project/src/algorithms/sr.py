@@ -128,8 +128,13 @@ def compute_sr_loss(
     pred_reward = torch.einsum("bd,d->b", phi, model.reward_weights)
     reward_loss = F.mse_loss(pred_reward, rewards)
 
-    # Emphasize reward prediction so that reward weights w learn fast.
-    total_loss = sr_loss + 20.0 * reward_loss
+    # Balance reward prediction against SR-Bellman consistency. Earlier runs
+    # used weight=20.0 which dominated total_loss (reward_loss * 20 ~ 0.4-1.0
+    # vs sr_loss ~ 0.05), shaping phi primarily to linearly predict reward
+    # and leaving action-Q margin underdetermined. 5.0 keeps reward fitting
+    # strong but lets the Bellman term drive comparable-magnitude gradients.
+    REWARD_LOSS_WEIGHT = 5.0
+    total_loss = sr_loss + REWARD_LOSS_WEIGHT * reward_loss
 
     if DEBUG_SR and obs.shape[0] == 1:
         print("phi shape:", phi.shape)
