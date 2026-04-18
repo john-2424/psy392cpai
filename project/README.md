@@ -51,7 +51,8 @@ project/
 │   ├── train_ppo.py               # 3 seeds × (stable + 4 adaptation conditions)
 │   ├── train_sr.py                # 3 seeds × (stable + 4 adaptation + wonly variant on reward_change)
 │   ├── train_replay.py            # 3 seeds × (stable + 4 adaptation conditions)
-│   └── train_sr_no_norm.py        # Ablation: SR without phi normalization
+│   ├── train_sr_no_norm.py        # Ablation: SR without phi normalization
+│   └── probe_representations.py   # Linear-probe encoder features (M2 deliverable)
 ├── notebooks/
 │   └── analysis.ipynb             # Figures + summary table
 ├── results/                       # CSVs, figures, model checkpoints (generated)
@@ -106,6 +107,13 @@ ls results/csv/ | wc -l                      # should hit ~60+ CSVs once everyth
 | `<agent>_seed<s>_adapt_<cond>_full.csv` (4 conditions) | Few-shot adaptation (all params unfrozen) | 4 |
 | `sr_seed<s>_adapt_reward_change_wonly.csv` | SR-only: Momennejad-style reward-weights-only variant | 1 (SR only) |
 
+Plus, generated from the notebook post-processing and the probe script:
+
+| CSV | Purpose |
+|---|---|
+| `results/adaptation_metrics.csv` | AUC + t_thr(0.5) per (agent, seed, condition, variant) |
+| `results/csv/probe_results.csv` | Linear-probe R² / accuracy per (agent, seed, probe target) |
+
 So for 3 seeds × 3 agents + SR `wonly` + ablation:
 
 - PPO:    3 × (1 + 5 + 4) = 30
@@ -119,11 +127,12 @@ Plus model checkpoints in `results/models/`: one stable-pretrain `.pt` per agent
 
 ## 5. Generate figures and summary table
 
-After all training finishes:
+After all training finishes, also run the representation probe (depends on the best-stable checkpoints written by the training scripts):
 
 ```bash
 cd project
 export PYTHONPATH="."
+python scripts/probe_representations.py                                # ~30 s
 jupyter nbconvert --to notebook --execute notebooks/analysis.ipynb --inplace
 ```
 
@@ -135,8 +144,9 @@ This produces, in `results/figures/`:
 - `adaptation_grid.png` — 3 × 4 grid of adaptation curves per (agent, condition)
 - `cross_agent_adaptation.png` — bar chart at Early / Mid / Late checkpoints per condition
 - `ablation_sr_no_norm.png` — SR with vs without φ-normalization
+- `representation_probe.png` — linear-probe R² / accuracy per (agent, probe target)
 
-…and the summary table at `results/summary_table.csv`.
+…and the summary table at `results/summary_table.csv`, plus `results/adaptation_metrics.csv` (AUC / t_thr).
 
 To inspect the notebook interactively instead:
 
@@ -149,12 +159,13 @@ jupyter notebook notebooks/analysis.ipynb
 | Step | Wall-time |
 |---|---|
 | PPO (3 seeds × all conditions) | ~20 min |
-| SR (3 seeds × all conditions + `wonly`) | ~45 min |
+| SR (3 seeds × 500 eps × all conditions + `wonly`) | ~60 min |
 | Replay (3 seeds × all conditions) | ~60 min |
 | SR no-norm ablation | ~5 min |
+| Probe script | ~30 s |
 | Notebook execution | ~30 s |
-| **Full pipeline (serial)** | **~2 h 10 min** |
-| **Full pipeline (3 parallel terminals)** | **~1 h** |
+| **Full pipeline (serial)** | **~2 h 30 min** |
+| **Full pipeline (3 parallel terminals)** | **~1 h 5 min** |
 
 ## 7. Troubleshooting
 
