@@ -1,0 +1,16 @@
+Agent,Condition,ZeroShot,Adapted
+PPO,Stable,1.00 ± 0.00,—
+PPO,Reward Change,0.00 ± 0.00,0.11 ± 0.19
+PPO,Transition Change,1.00 ± 0.00,1.00 ± 0.00
+PPO,Obs: Visual Distractors,1.00 ± 0.00,0.56 ± 0.51
+PPO,Obs: Channel Remap,0.00 ± 0.00,0.56 ± 0.51
+SR,Stable,0.11 ± 0.19,—
+SR,Reward Change,0.00 ± 0.00,0.00 ± 0.00
+SR,Transition Change,0.11 ± 0.19,0.00 ± 0.00
+SR,Obs: Visual Distractors,0.11 ± 0.19,0.11 ± 0.19
+SR,Obs: Channel Remap,0.00 ± 0.00,0.00 ± 0.00
+Replay,Stable,0.89 ± 0.19,—
+Replay,Reward Change,0.00 ± 0.00,0.78 ± 0.38
+Replay,Transition Change,0.67 ± 0.58,1.00 ± 0.00
+Replay,Obs: Visual Distractors,0.67 ± 0.33,1.00 ± 0.00
+Replay,Obs: Channel Remap,0.00 ± 0.00,0.50 ± 0.71

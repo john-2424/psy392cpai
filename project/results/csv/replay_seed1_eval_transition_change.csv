@@ -11,3 +11,15 @@ seed,episode,condition,success_rate,avg_return,avg_steps
 1,250,transition_change,0.0,-0.4999999888241291,50.0
 1,275,transition_change,0.0,-0.4999999888241291,50.0
 1,300,transition_change,0.0,-0.4999999888241291,50.0
+1,25,transition_change,0.0,-0.4999999888241291,50.0
+1,50,transition_change,0.0,-0.4999999888241291,50.0
+1,75,transition_change,0.0,-0.4999999888241291,50.0
+1,100,transition_change,0.0,-0.4999999888241291,50.0
+1,125,transition_change,0.0,-0.4999999888241291,50.0
+1,150,transition_change,0.0,-0.4999999888241291,50.0
+1,175,transition_change,0.0,-0.4999999888241291,50.0
+1,200,transition_change,1.0,0.9100000020116568,10.0
+1,225,transition_change,1.0,0.9100000020116568,10.0
+1,250,transition_change,1.0,0.9100000020116568,10.0
+1,275,transition_change,1.0,0.9100000020116568,10.0
+1,300,transition_change,0.0,-0.4999999888241291,50.0
