@@ -30,9 +30,11 @@ Standard deep-RL benchmarks rarely factor cleanly along all three of these axes.
 | **H4** | All agents drop zero-shot on `obs_visual` but recover quickly with few-shot adaptation | State identity is preserved — only the CNN's input distribution shifts. Consistent with rate remapping under Sanders et al. (2020). |
 | **H5** | `obs_remap` is strictly harder than `obs_visual`; recovery is slower and less complete | The obs→state map must be relearned. Analogous to global remapping. |
 
-### Revisions from v1
+### Revisions from v1 → v2 → v3
 
-A first version of this project (seed 0 only; three conditions: stable, reward_change, transition_change; zero-shot evaluation only) returned null results for H1–H3 (Section 6). Review feedback highlighted two structural problems: (a) the CNN by itself did not differentiate the study from simpler grid-based tutorials, and (b) the zero-shot evaluation never exercised the SR or replay mechanisms that the hypotheses invoke. This v2 addresses both by adding the two observation-change conditions (H4, H5) and a few-shot adaptation phase that parallels Momennejad et al. (2017)'s behavioral protocol. We also run three seeds and add one targeted ablation (SR without φ-normalization, per Lehnert et al. 2024).
+- **v1** (seed 0 only; three conditions: stable, reward_change, transition_change; zero-shot evaluation only) returned null results for H1–H3. Review feedback highlighted two structural problems: (a) the CNN by itself did not differentiate the study from simpler grid-based tutorials, and (b) the zero-shot evaluation never exercised the SR or replay mechanisms that the hypotheses invoke.
+- **v2** added the two observation-change conditions (H4, H5), a few-shot adaptation phase paralleling Momennejad et al. (2017)'s behavioral protocol, three seeds per agent, and one ablation (SR without φ-normalization, per Lehnert et al. 2024).
+- **v3** (this report) closes the remaining M2 proposal deliverables: (a) a representation probe of all three agents' encoders for agent-position, goal-identity, and Manhattan-to-goal (§5.7); (b) adaptation-speed metrics — normalized AUC and time-to-threshold — in addition to end-of-phase snapshots (§5.4); (c) a rebalance of the SR loss (reward-weight 20 → 5 in `compute_sr_loss`) motivated by inspection of v2 training dynamics. The rebalance reshapes what the SR encoder represents (§5.7) but does not recover persistent greedy policies — leading to a sharper diagnosis of deep-SF policy-extraction fragility as the binding constraint (§6.3).
 
 ---
 
@@ -92,17 +94,20 @@ From `project/`:
 ```bash
 # (1) Stable + zero-shot + adaptation runs for each agent (3 seeds each)
 PYTHONPATH=. python scripts/train_ppo.py      # ~20 min
-PYTHONPATH=. python scripts/train_sr.py       # ~45 min
+PYTHONPATH=. python scripts/train_sr.py       # ~60 min (500 eps, v3)
 PYTHONPATH=. python scripts/train_replay.py   # ~60 min
 
 # (2) SR φ-normalization ablation
 PYTHONPATH=. python scripts/train_sr_no_norm.py  # ~5 min
 
-# (3) Figures + summary table
+# (3) Representation probe (reads best.pt for each agent × seed)
+PYTHONPATH=. python scripts/probe_representations.py  # ~30 s
+
+# (4) Figures + summary + adaptation metrics
 jupyter nbconvert --to notebook --execute notebooks/analysis.ipynb --inplace
 ```
 
-Outputs land in `results/csv/` (training / evaluation / adaptation CSVs) and `results/figures/` (all figures the report references).
+Outputs: `results/csv/` (training / evaluation / adaptation / probe CSVs), `results/figures/` (all figures the report references), `results/summary_table.csv` (zero-shot / adapted snapshot table), and `results/adaptation_metrics.csv` (AUC and t_thr per agent × seed × condition × variant).
 
 ---
 
@@ -237,9 +242,9 @@ v1 (seed 0 only, zero-shot only, 3 conditions) returned null H1/H2/H3 because ze
 
 ## 7. Conclusion
 
-We built a five-condition vision-based gridworld that separates three canonical axes of environmental change — reward, transition, and observation — and evaluated three representative RL agents under zero-shot and few-shot adaptation protocols. The design directly operationalizes two prominent neuroscience frameworks (Momennejad et al.'s reward/transition revaluation and Sanders et al.'s remapping-as-inference), and addresses the v1 design gaps (single seed, zero-shot-only evaluation) that rendered the earlier comparison uninformative. The one ablation reproduces Lehnert et al.'s (2024) prediction that deep SF training requires φ-normalization to avoid representational collapse.
+We built a five-condition vision-based gridworld that separates three canonical axes of environmental change — reward, transition, and observation — and evaluated three representative RL agents under zero-shot and few-shot adaptation protocols. The design directly operationalizes two prominent neuroscience frameworks (Momennejad et al.'s reward/transition revaluation and Sanders et al.'s remapping-as-inference), and addresses the v1 design gaps (single seed, zero-shot-only evaluation) that rendered the earlier comparison uninformative. The SR-no-norm ablation reproduces Lehnert et al.'s (2024) prediction that deep SF training requires φ-normalization to avoid representational collapse.
 
-The specific H1–H5 outcomes are determined by the adaptation curves in `results/figures/adaptation_grid.png` and `cross_agent_adaptation.png`, and the numeric summary in `results/summary_table.csv`, which will be reported as part of the final submission.
+**Headline outcomes (v3).** H2, H4, and H5 are supported cleanly: Replay adapts to `transition_change` at ceiling (AUC 0.97), the `obs_visual` rate-remapping condition recovers under adaptation (Replay 1.00), and `obs_remap` is strictly harder than `obs_visual` for every agent. H1 is partially supported: end-of-phase snapshots say Replay > PPO > SR, but the AUC view recovers the Momennejad-style SR-wonly > PPO direction on `reward_change` (0.38 vs 0.15) and approaches Replay (0.44). H3's cross-agent dissociation does not manifest. The §5.7 representation probe adds the v3's most interesting empirical result: the SR encoder is the only one that linearly encodes goal identity (0.94 vs PPO 0.59 / Replay 0.37) and Manhattan distance (+0.50 vs −3.1 / −1.4), while being the worst at agent-column (−0.15 vs 0.73 / 0.70). The SR agent's failure to stabilize a greedy policy is therefore not a representation-quality failure — it is a deep-SF policy-extraction fragility that is honest to diagnose and concrete to fix (§6.3). All numbers are read from `results/summary_table.csv`, `results/adaptation_metrics.csv`, `results/csv/probe_results.csv`, and the figures in `results/figures/`.
 
 ---
 
