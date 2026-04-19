@@ -1,0 +1,137 @@
+\section{Agent Hyperparameters}
+\label{app:hyperparams}
+
+All three agents share a convolutional encoder with two 3$\times$3 conv layers (channels $3\rightarrow 16\rightarrow 32$), ReLU activations, and a final linear layer mapping flattened features to a \texttt{feature\_dim}-sized embedding. PPO and Replay use \texttt{feature\_dim}=128; SR uses \texttt{feature\_dim}=64 (and $\ell_2$-normalizes the embedding). Optimizer: Adam.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Hyperparameters for each agent. Values extracted from \texttt{scripts/train\_ppo.py}, \texttt{scripts/train\_sr.py}, and \texttt{scripts/train\_replay.py}.}
+\label{tab:hyperparams}
+\begin{tabular}{@{}l l l l@{}}
+\toprule
+Parameter & PPO & SR & Replay \\
+\midrule
+Total training budget & 50{,}000 frames & 500 episodes & 300 episodes \\
+Frames / episode cap & 512 per batch & 50 steps & 50 steps \\
+Epochs per batch & 4 & --- & --- \\
+Minibatch size & 64 & 32 & 32 \\
+Learning rate & $3\cdot 10^{-4}$ & $3\cdot 10^{-4}$ & $1\cdot 10^{-3}$ \\
+Discount $\gamma$ & 0.99 (GAE) & 0.95 & 0.99 \\
+Target-net soft update $\tau$ & --- & 0.05 & 0.01 \\
+Replay buffer capacity & --- & 5{,}000 & 10{,}000 \\
+Q-updates per env step & --- & 1 & 2 \\
+$\epsilon$ schedule & --- & $1.0\rightarrow 0.05$ over 300 eps & $1.0\rightarrow 0.05$ over 300 eps \\
+Reward-loss weight $\alpha_r$ & --- & 5 (v3) & --- \\
+Feature dimension & 128 & 64 ($\ell_2$-normalized) & 128 \\
+Grad clip & 1.0 & --- & --- \\
+Adaptation budget & 20 batches & 60 episodes & 60 episodes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Per-Seed Adaptation Metrics}
+\label{app:per-seed}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Per-seed adaptation AUC and median $t_{0.5}$ (NaN $=$ threshold never reached). Source: \texttt{results/adaptation\_metrics.csv}. Seeds where the row was missing (e.g., Replay seed~1 on \texttt{obs\_remap}) were dropped by the analysis notebook and reported here as ``---''.}
+\label{tab:per-seed-auc}
+\begin{tabular}{@{}l l l l c c@{}}
+\toprule
+Agent & Seed & Condition & Variant & AUC & $t_{0.5}$ \\
+\midrule
+PPO & 0 & reward\_change & full & 0.44 & 2 \\
+PPO & 1 & reward\_change & full & 0.00 & --- \\
+PPO & 2 & reward\_change & full & 0.00 & --- \\
+PPO & 0 & transition\_change & full & 1.00 & 2 \\
+PPO & 1 & transition\_change & full & 1.00 & 2 \\
+PPO & 2 & transition\_change & full & 1.00 & 2 \\
+PPO & 0 & obs\_visual & full & 0.89 & 2 \\
+PPO & 1 & obs\_visual & full & 1.00 & 2 \\
+PPO & 2 & obs\_visual & full & 0.61 & 2 \\
+PPO & 0 & obs\_remap & full & 0.11 & 18 \\
+PPO & 1 & obs\_remap & full & 0.00 & --- \\
+PPO & 2 & obs\_remap & full & 0.72 & 8 \\
+\midrule
+SR & 0 & reward\_change & full  & 0.32 & 5 \\
+SR & 1 & reward\_change & full  & 0.05 & 5 \\
+SR & 2 & reward\_change & full  & 0.00 & --- \\
+SR & 0 & reward\_change & wonly & 1.00 & 5 \\
+SR & 1 & reward\_change & wonly & 0.14 & 5 \\
+SR & 2 & reward\_change & wonly & 0.00 & --- \\
+SR & 0 & transition\_change & full & 0.27 & 10 \\
+SR & 1 & transition\_change & full & 0.09 & 30 \\
+SR & 2 & transition\_change & full & 0.05 & 5 \\
+SR & 0 & obs\_visual & full & 0.18 & 15 \\
+SR & 1 & obs\_visual & full & 0.00 & --- \\
+SR & 2 & obs\_visual & full & 0.05 & 5 \\
+SR & 0 & obs\_remap & full & 0.00 & --- \\
+SR & 1 & obs\_remap & full & 0.09 & 35 \\
+SR & 2 & obs\_remap & full & 0.14 & 35 \\
+\midrule
+Replay & 0 & reward\_change & full & 0.23 & 30 \\
+Replay & 1 & reward\_change & full & 0.50 & 15 \\
+Replay & 2 & reward\_change & full & 0.59 & 25 \\
+Replay & 0 & transition\_change & full & 0.95 & 5 \\
+Replay & 1 & transition\_change & full & 0.95 & 5 \\
+Replay & 2 & transition\_change & full & 1.00 & 5 \\
+Replay & 0 & obs\_visual & full & 0.95 & 5 \\
+Replay & 1 & obs\_visual & full & 1.00 & 5 \\
+Replay & 2 & obs\_visual & full & 1.00 & 5 \\
+Replay & 0 & obs\_remap & full & 0.59 & 25 \\
+Replay & 2 & obs\_remap & full & 0.00 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Per-Seed Representation Probe Scores}
+\label{app:probe}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Per-seed 5-fold CV probe scores. $R^2$ for regressors; accuracy for the goal-column binary classifier (chance $=0.5$). Source: \texttt{results/csv/probe\_results.csv}.}
+\label{tab:probe-per-seed}
+\begin{tabular}{@{}l c c c c c@{}}
+\toprule
+Agent & Seed & agent\_row ($R^2$) & agent\_col ($R^2$) & goal\_col (acc) & Manhattan ($R^2$) \\
+\midrule
+PPO & 0 & 0.81 & 0.72 & 0.47 & $-1.07$ \\
+PPO & 1 & 0.69 & 0.74 & 0.61 & $-8.30$ \\
+PPO & 2 & 0.87 & 0.72 & 0.69 & 0.05 \\
+\midrule
+SR & 0 & 0.63 & $-0.05$ & 0.98 & $-0.15$ \\
+SR & 1 & 0.81 & $-0.76$ & 0.85 & 0.86 \\
+SR & 2 & 0.60 & 0.36 & 0.98 & 0.80 \\
+\midrule
+Replay & 0 & 0.88 & 0.83 & 0.30 & $-1.24$ \\
+Replay & 1 & 0.74 & 0.79 & 0.25 & $-2.83$ \\
+Replay & 2 & 0.46 & 0.47 & 0.58 & $-0.14$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Reproducing the Experiments}
+\label{app:reproduce}
+
+From \texttt{project/} (\texttt{PYTHONPATH=.}):
+
+\begin{verbatim}
+# (1) Stable + zero-shot + adaptation for each agent (3 seeds each)
+python scripts/train_ppo.py      # ~20 min
+python scripts/train_sr.py       # ~60 min (500 eps, v3)
+python scripts/train_replay.py   # ~60 min
+
+# (2) SR phi-normalization ablation
+python scripts/train_sr_no_norm.py  # ~5 min
+
+# (3) Representation probe (reads best.pt for each agent x seed)
+python scripts/probe_representations.py  # ~30 s
+
+# (4) Figures + summary + adaptation metrics
+jupyter nbconvert --to notebook --execute notebooks/analysis.ipynb --inplace
+\end{verbatim}
+
+Outputs: \texttt{results/csv/} (training/evaluation/adaptation/probe CSVs), \texttt{results/figures/} (all figures referenced here), \texttt{results/summary\_table.csv} (Table~\ref{tab:summary}), \texttt{results/adaptation\_metrics.csv} (Table~\ref{tab:auc}, Table~\ref{tab:per-seed-auc}), and \texttt{results/csv/probe\_results.csv} (Table~\ref{tab:probe}, Table~\ref{tab:probe-per-seed}).

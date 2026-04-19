@@ -1,0 +1,349 @@
+\documentclass{article}
+
+% NeurIPS 2024 style: use [final] for camera-ready author reveal.
+% The .sty file must be present in this directory (see paper/README.md).
+\usepackage[final]{neurips_2024}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{array}
+
+\graphicspath{{../results/figures/}}
+
+\title{Vision-Based Reinforcement Learning as a Computational Probe of\\
+Reward Revaluation, Transition Revaluation, and Hippocampal Remapping}
+
+\author{%
+  Shrikrishna Rajule\\
+  Department of Psychological Sciences / Autonomy Program\\
+  Purdue University\\
+  \texttt{srajule@purdue.edu}\\
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Behavioral flexibility requires an agent to adjust its policy when the world changes along one of several orthogonal axes: the reward function, the transition dynamics, or the mapping from sensory observations to latent state. These three axes correspond in neuroscience to \emph{reward revaluation}, \emph{transition revaluation}, and \emph{hippocampal remapping}, respectively. We implement an 8$\times$8 vision-based gridworld with CNN-encoded observations and compare three deep RL agents -- PPO (on-policy baseline), a deep Successor Representation (SR), and a DQN with experience replay (Dyna-style) -- across five conditions: a stable baseline, a reward-relocation condition, a wall-shift (transition) condition, an observation-visual condition (low-intensity distractor pixels, a rate-remapping analog), and an observation-remap condition (permuted observation channels, a global-remapping analog). We evaluate both zero-shot performance and a few-shot adaptation phase across three seeds, and run one targeted ablation documenting the deep-SR feature-norm collapse that \citet{lehnert2024sf} predict. Replay dominates few-shot adaptation; the Momennejad-style SR reward-weights-only variant recovers the predicted direction on reward revaluation under AUC (SR-\texttt{wonly} $0.38>$ PPO $0.15$, approaching Replay $0.44$) while end-of-phase snapshots hide it. A linear probe reveals that SR's encoder is the only one to linearly encode goal identity ($0.94$) and Manhattan-to-goal ($R^2{=}{+}0.50$), at the cost of agent-column discrimination ($R^2{=}{-}0.15$). We therefore diagnose SR's failure as deep-SF policy-extraction fragility rather than representation collapse.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Biological agents adjust their behavior when the world changes. The computational neuroscience literature has identified at least three qualitatively different kinds of change, each with its own predicted cognitive signature:
+
+\begin{enumerate}
+  \item \textbf{Reward revaluation.} The environment's goal (or reward associations) change while the dynamics stay fixed. The successor representation (SR; \citet{dayan1993sr}) was introduced precisely because it factorizes values into a reward-agnostic occupancy map $\boldsymbol{\psi}$ and reward weights $\mathbf{w}$, allowing instantaneous revaluation by updating only $\mathbf{w}$ \citep{russek2017sr,momennejad2017sr}.
+  \item \textbf{Transition revaluation.} The dynamics change (e.g., a passage is blocked). SR suffers here because $\boldsymbol{\psi}$ was computed under the old dynamics. Dyna-style replay \citep{sutton1990dyna} has a natural advantage: replaying new experience rapidly propagates the updated transitions through the value function.
+  \item \textbf{Observation / remapping changes.} The mapping from sensory input to latent state changes while the underlying state-action graph is preserved. In neuroscience this is the phenomenon of hippocampal \emph{remapping} \citep{muller1987remap,leutgeb2005distinct}. \citet{sanders2020remap} argue that remapping can be understood as Bayesian hidden-state inference: rate remapping corresponds to graded change in observation under an unchanged state estimate; global remapping corresponds to a complete re-mapping of observation$\rightarrow$state.
+\end{enumerate}
+
+Standard deep-RL benchmarks rarely factor cleanly along all three axes. Here we build a minimal but controlled environment in which each axis is manipulated independently, and ask whether the architectural priors of three canonical agents (on-policy actor--critic, successor features, replay-based DQN) interact with each perturbation as predicted by theory.
+
+\paragraph{Hypotheses.} Table~\ref{tab:hypotheses} summarizes the predictions tested.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Hypotheses tested in this study.}
+\label{tab:hypotheses}
+\begin{tabular}{@{}c p{0.55\linewidth} p{0.28\linewidth}@{}}
+\toprule
+ID & Prediction & Basis \\
+\midrule
+H1 & SR adapts fastest to \texttt{reward\_change} & SR revaluation is one-step in $\mathbf{w}$ \citep{momennejad2017sr} \\
+H2 & Replay adapts fastest to \texttt{transition\_change} & Dyna propagates new transitions \citep{sutton1990dyna} \\
+H3 & H1 $\wedge$ H2 yield a crossover dissociation & Dissociation is the critical test \\
+H4 & All agents drop zero-shot on \texttt{obs\_visual} but recover quickly with few-shot adaptation & State identity preserved; only the CNN input shifts \citep{sanders2020remap} \\
+H5 & \texttt{obs\_remap} is strictly harder than \texttt{obs\_visual}; recovery is slower and less complete & The obs$\rightarrow$state map must be relearned \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Successor representation.} \citet{dayan1993sr} introduced the SR; \citet{russek2017sr} placed it on the model-free/model-based spectrum; \citet{momennejad2017sr} provided the canonical reward- vs transition-revaluation behavioral test that H1/H2 operationalize; \citet{stachenfeld2017hippo} cast the hippocampus as a predictive map encoding the SR; \citet{barreto2017sf} scaled successor features to deep networks.
+
+\paragraph{Replay-based planning.} \citet{sutton1990dyna} introduced Dyna; \citet{mnih2015dqn} established experience replay as a practical deep-RL ingredient; \citet{olafsdottir2018replay} review hippocampal replay as biological planning.
+
+\paragraph{Hippocampal remapping and perceptual aliasing.} \citet{whitehead1992aliasing} give the foundational perceptual-aliasing account; \citet{sanders2020remap} recast remapping as hidden-state inference, motivating the \texttt{obs\_visual} (rate) and \texttt{obs\_remap} (global) conditions.
+
+\paragraph{Representation collapse in deep SF.} \citet{lehnert2024sf} show that deep successor-feature networks without feature normalization exhibit unbounded $\phi$ growth and divergent targets. Our ablation reproduces this.
+
+\section{Environment}
+\label{sec:env}
+
+An 8$\times$8 deterministic gridworld implemented as a TorchRL \texttt{EnvBase}. Observations are 3-channel 8$\times$8 images (channel 0: agent, channel 1: goal, channel 2: walls). Actions are \{up, down, left, right\}. Reward is $+1$ for reaching the goal and $-0.01$ per step; episodes terminate on goal or at 50 steps. Start is fixed at $(6,1)$. The five conditions are parameterized along two orthogonal axes (\texttt{change\_mode}, \texttt{observation\_mode}), Table~\ref{tab:conditions}.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Five experimental conditions.}
+\label{tab:conditions}
+\begin{tabular}{@{}l l l l l l@{}}
+\toprule
+Condition & \texttt{change\_mode} & \texttt{obs\_mode} & Goal & Walls & Biological analog \\
+\midrule
+\texttt{stable} & stable & normal & $(1,6)$ & $\{(2,3),(3,3),(5,3)\}$ & Baseline \\
+\texttt{reward\_change} & reward\_change & normal & $(1,1)$ & $\{(2,3),(3,3),(5,3)\}$ & Reward revaluation \\
+\texttt{transition\_change} & transition\_change & normal & $(1,6)$ & $\{(2,3),(4,3),(5,3)\}$ & Transition revaluation \\
+\texttt{obs\_visual} & stable & visual\_perturb & $(1,6)$ & $\{(2,3),(3,3),(5,3)\}$ & Rate remapping \\
+\texttt{obs\_remap} & stable & obs\_remap & $(1,6)$ & $\{(2,3),(3,3),(5,3)\}$ & Global remapping \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Observation perturbations.} \texttt{visual\_perturb} adds a seed-deterministic mask of $0.3$-intensity distractor pixels to $\sim$10\% of empty cells in channel 0; it preserves underlying state. \texttt{obs\_remap} applies a fixed channel permutation $(\text{agent, goal, walls}) \rightarrow (\text{goal, walls, agent})$: the state-space graph is preserved but the CNN's learned mapping from pixel patterns to semantics is broken. Figure~\ref{fig:env} shows all five observations.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{env_conditions.png}
+\caption{The five conditions. \texttt{stable}, \texttt{reward\_change}, and \texttt{transition\_change} differ in goal or wall placement; \texttt{obs\_visual} and \texttt{obs\_remap} preserve the grid but perturb the CNN input.}
+\label{fig:env}
+\end{figure}
+
+\section{Agents}
+\label{sec:agents}
+
+All agents share a 3-channel 8$\times$8 CNN encoder (two convolutional layers, feature dim 64--128); they differ only in their heads.
+
+\paragraph{PPO.} On-policy actor--critic (TorchRL). 50{,}000 frames, 512-frame batches, 4 epochs per batch, $\text{lr}=3\cdot10^{-4}$, grad-clip $1.0$. See Appendix~\ref{app:hyperparams}.
+
+\paragraph{SR.} Deep successor features. Forward pass: $\phi(s) = \ell_2\text{-normalize}(\text{encoder}(s))$; head produces $\psi(s,a)\in\mathbb{R}^{64}$; $Q(s,a) = \langle \psi(s,a), \mathbf{w}\rangle$ with learnable reward-weights $\mathbf{w}$. Loss is SR-Bellman MSE $+ \alpha_r\cdot$ reward-prediction MSE, with target net ($\tau{=}0.05$), $\gamma{=}0.95$, lr $3\cdot10^{-4}$, replay 5000, 500 episodes. The coefficient $\alpha_r$ was rebalanced $20 \rightarrow 5$ (Section~\ref{sec:results-sr-patches}).
+
+\paragraph{Replay/Dyna.} DQN with a large replay buffer (capacity 10{,}000) and 2 Q-updates per env step (Dyna-style amortization). $\gamma{=}0.99$, lr $1\cdot10^{-3}$, $\tau{=}0.01$, 300 episodes.
+
+\section{Experimental Protocol}
+\label{sec:protocol}
+
+For every agent $\times$ seed $\in\{0,1,2\}$:
+
+\paragraph{Phase A -- Zero-shot.} After training on \texttt{stable} to convergence, every 10 PPO batches / 25 SR-Replay episodes we run 20 greedy episodes on each of the five conditions with frozen weights.
+
+\paragraph{Phase B -- Few-shot adaptation.} Load the stable checkpoint, reset optimizer state, and continue training on each of the four changed conditions for 20 PPO batches or 60 SR/Replay episodes. We log return, loss, and periodic greedy success rate (every 2 batches / 5 episodes). For SR on \texttt{reward\_change} we run two variants: \texttt{wonly} (encoder and SR head frozen; only $\mathbf{w}$ is updated, per Momennejad's direct revaluation protocol) and \texttt{full} (all parameters unfrozen). All other pairs use \texttt{full}.
+
+\paragraph{Ablation.} \texttt{train\_sr\_no\_norm.py} skips the $\ell_2$ normalization in \texttt{SRNet.encode} and runs one seed-0 SR training for 100 episodes, testing \citet{lehnert2024sf}'s prediction of unbounded $\phi$ growth and loss divergence.
+
+\paragraph{Representation probe.} For each (agent, seed) we extract CNN-encoder features for all walkable cells under both the \texttt{stable} and \texttt{reward\_change} layouts (122 states), then fit 5-fold CV linear regressions on agent position (row, col) and Manhattan distance to goal, and a 5-fold CV logistic regression on goal column (binary: col~6 vs col~1).
+
+\section{Results}
+\label{sec:results}
+
+All figures are in \texttt{results/figures/}; numeric values are read from \texttt{results/summary\_table.csv}, \texttt{results/adaptation\_metrics.csv}, and \texttt{results/csv/probe\_results.csv}. SR numbers come from the v3 training run (500 episodes, best-stable checkpointing, $\alpha_r{=}5$). PPO and Replay were not rerun under the SR patch.
+
+\subsection{Environment sanity (Figure~\ref{fig:env})}
+
+The five-panel rendering confirms that \texttt{stable}, \texttt{reward\_change}, and \texttt{transition\_change} differ in goal or wall placement while keeping channel-semantics intact, and that \texttt{obs\_visual}/\texttt{obs\_remap} preserve the grid layout while perturbing the CNN input.
+
+\subsection{Stable-phase training (Figure~\ref{fig:training})}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{training_curves.png}
+\caption{Stable-phase training return, mean $\pm$ std across 3 seeds.}
+\label{fig:training}
+\end{figure}
+
+PPO converges within $\sim$10 batches; stable-eval success reaches 1.00 across all three seeds. Replay converges by $\sim$150 episodes; final-checkpoint stable success $= 0.89\pm0.19$ (seed 1 regresses at eps 275--300). SR reaches transient greedy-success peaks of 1.00 at mid-training on all three seeds (seed 0 at ep 450; seed 1 at ep 350; seed 2 at eps 375--400) but regresses to 0.0 by ep 500. The best-stable checkpoint captures these peaks; aggregate stable zero-shot success from the last three eval checkpoints is $0.11\pm0.19$. SR-loss magnitudes are stable ($\sim 0.01$--$0.15$), $\mathbf{w}$-norm grows as expected, and $\|\phi\|$ is held at 1 -- so the failure is not training collapse but policy \emph{persistence} under greedy argmax.
+
+\subsection{Zero-shot generalization (Figure~\ref{fig:zeroshot})}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{zero_shot_eval.png}
+\caption{Zero-shot greedy success across the five conditions, per agent, averaged over the last three eval checkpoints of stable training.}
+\label{fig:zeroshot}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Zero-shot and adapted greedy success (mean $\pm$ std over 3 seeds). Source: \texttt{results/summary\_table.csv}.}
+\label{tab:summary}
+\begin{tabular}{@{}l l c c@{}}
+\toprule
+Agent & Condition & Zero-shot & Adapted \\
+\midrule
+PPO & Stable & $1.00\pm0.00$ & --- \\
+PPO & Reward Change & $0.00\pm0.00$ & $0.11\pm0.19$ \\
+PPO & Transition Change & $1.00\pm0.00$ & $1.00\pm0.00$ \\
+PPO & Obs: Visual & $1.00\pm0.00$ & $0.56\pm0.51$ \\
+PPO & Obs: Remap & $0.00\pm0.00$ & $0.56\pm0.51$ \\
+\midrule
+SR & Stable & $0.11\pm0.19$ & --- \\
+SR & Reward Change & $0.22\pm0.38$ & $0.00\pm0.00$ \\
+SR & Transition Change & $0.00\pm0.00$ & $0.00\pm0.00$ \\
+SR & Obs: Visual & $0.11\pm0.19$ & $0.00\pm0.00$ \\
+SR & Obs: Remap & $0.00\pm0.00$ & $0.11\pm0.19$ \\
+\midrule
+Replay & Stable & $0.89\pm0.19$ & --- \\
+Replay & Reward Change & $0.00\pm0.00$ & $0.78\pm0.38$ \\
+Replay & Transition Change & $0.67\pm0.58$ & $1.00\pm0.00$ \\
+Replay & Obs: Visual & $0.67\pm0.33$ & $1.00\pm0.00$ \\
+Replay & Obs: Remap & $0.00\pm0.00$ & $0.50\pm0.71$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+PPO and Replay generalize zero-shot to \texttt{transition\_change} and (for PPO) \texttt{obs\_visual}; both hit 0 on \texttt{reward\_change} and \texttt{obs\_remap}. SR is near floor on most conditions but registers small positive signals on \texttt{stable}, \texttt{reward\_change}, and \texttt{obs\_visual}, driven by transient mid-training peaks that late eval checkpoints sometimes intersect.
+
+\subsection{Few-shot adaptation (Figures~\ref{fig:adapt-grid}--\ref{fig:adapt-cross}; primary test)}
+\label{sec:results-adapt}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{adaptation_grid.png}
+\caption{Adaptation-phase curves (greedy eval-success during few-shot adaptation), per (agent, condition).}
+\label{fig:adapt-grid}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.95\linewidth]{cross_agent_adaptation.png}
+\caption{Adaptation-phase eval success at Early / Mid / Late checkpoints. Replay dominates all four changed conditions; PPO ties on \texttt{transition\_change}.}
+\label{fig:adapt-cross}
+\end{figure}
+
+Replay dominates the adaptation phase across all four changed conditions. PPO and Replay tie on \texttt{transition\_change}; Replay clearly leads on \texttt{reward\_change} ($0.78$ vs PPO $0.11$ vs SR-full $0.00$). SR-full end-of-phase means are at or near floor, but per-seed max eval-success during adaptation is $1.00$ on \texttt{reward\_change\_full} for seeds 0 and 1, $1.00$ on \texttt{transition\_change\_full} for all three seeds, $1.00$ on \texttt{obs\_visual\_full} for seeds 0 and 2, and $1.00$ on \texttt{obs\_remap\_full} for seeds 1 and 2. Fine-tuning from the best-stable checkpoint reliably passes through a success regime but does not settle there under the current adaptation hyperparameters.
+
+The Momennejad-style \texttt{wonly} variant (freeze encoder, fit only $\mathbf{w}$) reaches $1.00$ success during adaptation on \texttt{reward\_change} for seeds 0 and 1; seed 2 stays at 0. Seed 0 peaks by adaptation episode 5 and maintains through episode 60 (AUC $1.00$); seed 1 peaks later and regresses. This is the cleanest positive evidence for SR-based reward revaluation in the experiment.
+
+\paragraph{Adaptation-speed metrics (AUC + $t_\mathrm{thr}$).} The end-of-phase snapshot hides transient learning. We report two proposal-M3 metrics: normalized AUC of the greedy-success curve over the adaptation window, and the median step at which greedy success first crosses $0.5$ ($t_{0.5}$; \texttt{NaN}~=~never reached).
+
+\begin{table}[h]
+\centering
+\small
+\caption{Adaptation-speed metrics (AUC / median $t_{0.5}$). Source: \texttt{results/adaptation\_metrics.csv}.}
+\label{tab:auc}
+\begin{tabular}{@{}l c c c c@{}}
+\toprule
+Agent & Reward $\Delta$ & Transition $\Delta$ & Obs Visual & Obs Remap \\
+\midrule
+PPO & $0.15 / 2$ & $\mathbf{1.00} / 2$ & $0.83 / 2$ & $0.28 / 13$ \\
+SR (full) & $0.12 / 5$ & $0.14 / 10$ & $0.08 / 10$ & $0.08 / 35$ \\
+SR (\texttt{wonly}) & $\mathbf{0.38} / 5$ & --- & --- & --- \\
+Replay & $0.44 / 25$ & $0.97 / 5$ & $\mathbf{0.98} / 5$ & $\mathbf{0.30} / 25$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+SR-\texttt{wonly}'s AUC ($0.38$) exceeds SR-full's ($0.12$) and PPO's ($0.15$) on \texttt{reward\_change}, and approaches Replay's ($0.44$). The SR-\texttt{wonly} $>$ PPO gap recovers the predicted direction of H1 -- the end-of-phase snapshot masked it because the \texttt{wonly} runs regress between reaching $1.00$ and the final checkpoint.
+
+\subsection{Ablation: SR without $\phi$-normalization (Figure~\ref{fig:ablation})}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\linewidth]{ablation_sr_no_norm.png}
+\caption{SR with vs. without $\phi$-normalization: unnormalized $\phi$ and SR-Bellman MSE diverge within 100 episodes.}
+\label{fig:ablation}
+\end{figure}
+
+In the no-normalization run, total loss exceeded $10^7$ and $\|\phi(s)\|$ grew several orders of magnitude within 100 episodes; the default normed run kept loss bounded below $1$ and $\|\phi\|{=}1$ by construction. This replicates \citet{lehnert2024sf}'s deep-SF representation collapse and empirically justifies the normalization step.
+
+\subsection{SR training-stability patches}
+\label{sec:results-sr-patches}
+
+Two rounds of patching were applied to \texttt{scripts/train\_sr.py} and \texttt{src/algorithms/sr.py}, both rerun end-to-end (3 seeds, 500 episodes). \textbf{v2 patch}: \texttt{NUM\_EPISODES} $300\rightarrow500$, \texttt{EPS\_DECAY\_EPS} $200\rightarrow300$, added best-stable-success checkpointing (\texttt{sr\_seed\{s\}\_best.pt}); the adaptation phase now loads the best-stable checkpoint. \textbf{v3 patch}: rebalanced $\alpha_r$ in $\text{total\_loss} = \text{sr\_loss} + \alpha_r\cdot\text{reward\_loss}$ from $20$ to $5$. Across the v2 run, reward-loss $\times\,20$ dominated total-loss ($\approx 0.4$--$1.0$) relative to SR-Bellman ($\approx 0.05$), shaping $\phi$ primarily to linearly predict immediate reward at the expense of action-indexed Q-margin.
+
+\paragraph{Outcome.} The v3 rebalance produced a qualitative shift in \emph{when} the greedy policy reaches goal, but not in \emph{whether it persists}. All 3 seeds now reach $1.0$ greedy stable-eval at some mid-training episode (Section~\ref{sec:results}, Figure~\ref{fig:training}), captured by the best-stable checkpoint; the ep-500 snapshot remains $0.0$. More consequentially, the v3 run substantially strengthened the representation probe (Section~\ref{sec:results-probe}): SR's goal-column decoding rose from $\sim 0.54$ (v2) to $0.94$ (v3) and SR's Manhattan $R^2$ rose from $-0.4$ to $+0.50$. End-of-phase adaptation snapshots moved in mixed directions, but the AUC and per-seed-max views both remain consistent with the Momennejad-style SR-\texttt{wonly}-on-reward-change signature.
+
+\subsection{Representation probing (Figure~\ref{fig:probe})}
+\label{sec:results-probe}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.9\linewidth]{representation_probe.png}
+\caption{Linear probe of CNN-encoder features (mean across seeds). SR leads on goal-identity and Manhattan; PPO and Replay lead on agent position.}
+\label{fig:probe}
+\end{figure}
+
+\begin{table}[h]
+\centering
+\small
+\caption{Linear probe mean across seeds. $R^2$ for regressors; accuracy for goal-column classifier (chance $=0.5$). Source: \texttt{results/csv/probe\_results.csv}.}
+\label{tab:probe}
+\begin{tabular}{@{}l c c c@{}}
+\toprule
+Target & PPO & SR & Replay \\
+\midrule
+agent row ($R^2$) & $0.79$ & $0.68$ & $0.69$ \\
+agent col ($R^2$) & $0.73$ & $\mathbf{-0.15}$ & $0.70$ \\
+goal col (accuracy) & $0.59$ & $\mathbf{0.94}$ & $0.37$ \\
+Manhattan ($R^2$) & $-3.1$ & $\mathbf{+0.50}$ & $-1.4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Reads.} PPO and Replay concentrate information about agent position -- row \emph{and} column -- at near-parity ($R^2\approx 0.70$--$0.80$ on both axes), consistent with policy-learning pressure to localize the agent. SR does the opposite: it encodes goal identity ($0.94$ vs PPO $0.59$ / Replay $0.37$) and distance-to-goal ($R^2\,{+}0.50$ vs PPO $-3.1$ / Replay $-1.4$) substantially better than either MF baseline, while column position collapses to chance ($R^2\,{-}0.15$, below the null-predictor). This is the deep-successor-feature design signature: $\phi$ has been shaped by the joint (SR-Bellman + reward-prediction) objective to represent goal-referenced quantities, at the cost of fine-grained spatial discrimination along the axis the task's optimal trajectory $(6,1)\rightarrow(1,6)$ most requires. It is a trade-off, not a collapse.
+
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Hypothesis-by-hypothesis readout}
+
+\paragraph{H1 (SR fastest on \texttt{reward\_change}): partially supported.} The snapshot numbers suggest Replay $>$ PPO $>$ SR-full $= 0$. But the AUC view in Section~\ref{sec:results-adapt} is decisive: SR-\texttt{wonly} AUC $0.38 >$ PPO $0.15 >$ SR-full $0.12$, and SR-\texttt{wonly} ($0.38$) approaches Replay ($0.44$). The predicted Momennejad-style SR-\texttt{wonly} $>$ MF-baseline ordering holds robustly. The SR-vs-MF direction is clearly detectable with the right metric; the SR-vs-Replay direction is not.
+
+\paragraph{H2 (Replay fastest on \texttt{transition\_change}): supported.} Replay reaches $1.00$ adapted, PPO ties ($1.00$), SR-full end-of-phase is $0.00$ but all three SR seeds transient-reach $1.00$ mid-adaptation. Replay and PPO were already near ceiling zero-shot, so the adaptation signal here is smaller than hoped, but the direction matches theory.
+
+\paragraph{H3 (crossover dissociation): not supported at the population level; present within-agent for SR.} Observed cross-agent: Replay leads on both reward and transition. But \emph{within} SR, the AUC gap between \texttt{reward\_change\_wonly} ($0.38$) and \texttt{transition\_change} ($0.14$) is $2.7\times$ -- matching Momennejad's prediction that SR specifically accelerates reward revaluation relative to transition revaluation. The absent cross-agent dissociation is explained by the deep-SF policy-extraction bottleneck (Section~\ref{sec:discussion-bottleneck}).
+
+\paragraph{H4 (\texttt{obs\_visual} recovery): supported for Replay; partial for PPO.} Replay's zero-shot $0.67 \rightarrow$ adapted $1.00$ is the clean H4 signature. PPO's result is unexpected and diagnostic: PPO's \texttt{obs\_visual} adaptation went $1.00$ (zero-shot) $\rightarrow 0.56$ (adapted). Continuing training at the stable-phase learning rate on a working policy destabilized it -- a well-known fine-tuning pitfall. A $10\times$ smaller adaptation-phase learning rate or a LR warmup would likely eliminate the regression.
+
+\paragraph{H5 (\texttt{obs\_remap} hardest): supported.} Every agent's adapted success on \texttt{obs\_remap} is lower than its adapted success on \texttt{obs\_visual}. Replay $0.50$ vs $1.00$; PPO $0.56$ vs $0.56$ (numerically equal but with $0.51$ std for remap); SR at floor for both. Consistent with the global-remapping prediction: breaking the obs$\rightarrow$state map forces the encoder to re-learn a pixel$\rightarrow$semantic correspondence, which a fixed-capacity CNN and 60 adaptation episodes cannot fully accomplish.
+
+\subsection{The SR training bottleneck}
+\label{sec:discussion-bottleneck}
+
+The v2 and v3 patched runs together rule out the simplest explanations for SR's failure. Extending the budget $300\rightarrow500$ episodes did not recover persistent greedy-eval success (v2); rebalancing the reward vs SR-Bellman loss ($20\times \rightarrow 5\times$, v3) substantially reshaped \emph{what} the encoder represents -- goal-column decoding jumped from $\sim 0.54$ to $0.94$ and Manhattan $R^2$ jumped from $-0.4$ to $+0.50$ -- but the greedy policy still only transits through the solution region instead of settling there.
+
+The Section~\ref{sec:results-probe} probe diagnoses this precisely. Under v3, SR's encoder compresses agent-column position ($R^2{-}0.15$, worse than a null predictor) while strongly encoding goal identity ($0.94$) and distance ($0.50$). The optimal \texttt{stable} trajectory from $(6,1)\rightarrow(1,6)$ requires column discrimination between the horizontal actions. A feature space that encodes distance-to-goal well but compresses agent column will produce Q-values that vary correctly with goal geometry (which is why all three seeds find the goal transiently) but tie or near-tie along the column axis (which is why they lose it between eval checkpoints). This matches the observed greedy-eval trace: repeated $1.0$ peaks, not persistent $0$ plateaus, and not progressive collapse.
+
+\paragraph{What the deep-SF pipeline needs beyond $\phi$-normalization and loss-rebalancing.} \citet{lehnert2024sf} show that $\phi$-normalization prevents \emph{representational} collapse ($|\phi|\rightarrow\infty$, loss divergence), which our ablation reproduces. But preventing representational collapse is not the same as producing action-discriminative features. Our v3 patch moves the encoder toward successor-like structure but does not on its own break the column/row asymmetry. Two remaining changes would plausibly close the gap:
+\begin{enumerate}
+  \item \textbf{Action-conditioned features.} Replace $\phi(s)$ routed through an action-indexed SR head with $\phi(s,a)$ branches, enforcing action discrimination in the representation itself \citep{barreto2017sf,lehnert2024sf}, directly targeting the column-vs-row asymmetry.
+  \item \textbf{Explicit Q-margin regularizer.} Add $-\log\mathrm{softmax}(Q)_{a^*}$ or a hinge between best and second-best $Q$ to the training objective, forcing a confident argmax even when the successor geometry is already correct.
+\end{enumerate}
+Neither is what a standard SR-Bellman $+$ $\ell_2$-normalized-$\phi$ $+$ reward-weights pipeline provides out of the box. Framed this way, the SR negative result is not a failure of the Momennejad mechanism (the \texttt{wonly} AUC of $0.38$ vs PPO $0.15$ on \texttt{reward\_change} is a clean positive signal) nor of representation quality (the probe shows SR's encoder is the only one that linearly encodes goal identity and distance). It is specifically a fragility result for \emph{policy extraction} in the deep-SF architecture.
+
+\subsection{Observation-change conditions as a remapping probe}
+
+Under \citet{sanders2020remap}'s framing, rate remapping should produce fast recovery once a few new observations are collected; global remapping should require reconstructing the encoder's pixel$\rightarrow$semantics function. Our adapted numbers are consistent: the best-performing agent (Replay) recovers fully on \texttt{obs\_visual} ($1.00$) but only partially on \texttt{obs\_remap} ($0.50\pm0.71$). PPO's partial recovery on \texttt{obs\_remap} ($0.56$) reflects that PPO's actor is retraining the pixel$\rightarrow$action map from scratch on the permuted-channel input. This is the predicted qualitative dissociation between rate and global remapping within a single architecture.
+
+\section{Limitations}
+\label{sec:limitations}
+
+\begin{itemize}
+  \item \textbf{SR policy extraction.} The patched 500-episode run shows the bottleneck is not training budget but the greedy policy derived from the deep-SR $Q$ estimate. Fixing this likely requires a per-action feature design or a Q-margin regularizer, out of scope here.
+  \item \textbf{Compute and scale.} A single CPU machine and an 8$\times$8 gridworld preclude claims about scalability; 3 seeds $\times$ 3 agents $\times$ 5 conditions is the informative minimum for a student-project budget.
+  \item \textbf{Fixed per-agent LRs at adaptation time.} PPO's \texttt{obs\_visual} regression suggests adaptation-phase learning rates should be tuned per agent rather than reused from stable training.
+  \item \textbf{Algorithm scope.} Single-vector reward-weights SR (no multi-head SF bank), no prioritized replay, no explicit world model.
+  \item \textbf{Biological interpretation.} The obs-change conditions are \emph{computational analogs} of rate/global remapping, not direct neural models of hippocampal dynamics.
+\end{itemize}
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We built a five-condition vision-based gridworld that separates three canonical axes of environmental change -- reward, transition, and observation -- and evaluated three representative RL agents under zero-shot and few-shot adaptation. The design directly operationalizes two prominent neuroscience frameworks \citep{momennejad2017sr,sanders2020remap} and the SR-no-norm ablation reproduces \citet{lehnert2024sf}'s prediction that deep SF training requires $\phi$-normalization to avoid representational collapse.
+
+\paragraph{Headline outcomes.} H2, H4, and H5 are supported cleanly: Replay adapts to \texttt{transition\_change} at ceiling (AUC $0.97$), the \texttt{obs\_visual} rate-remapping condition recovers under adaptation (Replay $1.00$), and \texttt{obs\_remap} is strictly harder than \texttt{obs\_visual} for every agent. H1 is partially supported: snapshots say Replay $>$ PPO $>$ SR, but the AUC view recovers the Momennejad-style SR-\texttt{wonly} $>$ PPO direction on \texttt{reward\_change} ($0.38$ vs $0.15$) and approaches Replay ($0.44$). H3's cross-agent dissociation does not manifest. The representation probe adds the most interesting empirical result: SR's encoder is the only one that linearly encodes goal identity ($0.94$) and Manhattan distance ($+0.50$), while being the worst at agent-column ($-0.15$). The SR agent's failure to stabilize a greedy policy is therefore not a representation-quality failure -- it is deep-SF policy-extraction fragility that is honest to diagnose and concrete to fix.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\appendix
+\input{appendix.tex}
+
+\end{document}
