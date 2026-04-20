@@ -8,9 +8,14 @@
 \usepackage{tikz}
 \usepackage{array}
 \usepackage{xcolor}
-\usetikzlibrary{positioning, arrows.meta, fit, backgrounds}
+\usetikzlibrary{positioning, arrows.meta, fit, backgrounds, shapes.geometric}
 
 \graphicspath{{figs/}{../results/figures/}}
+
+% --- Consistent agent colour palette (used across every bar chart and callout) ---
+\definecolor{ppoBlue}{HTML}{1f77b4}
+\definecolor{srOrange}{HTML}{ff7f0e}
+\definecolor{replayGreen}{HTML}{2ca02c}
 
 % Fallback if metropolis theme is not installed -- uncomment the two lines below
 % and comment out \usetheme{metropolis}.
@@ -18,7 +23,7 @@
 % \usecolortheme{dove}
 
 \title{Vision-Based RL as a Probe of\\Reward, Transition, and Observation Change}
-\subtitle{PSY~392~CPAI final project}
+\subtitle{Three architectures, three kinds of change --- PSY~392~CPAI final project}
 \author{Shrikrishna Rajule}
 \institute{Purdue University}
 \date{Spring 2026}
@@ -33,84 +38,86 @@
 \end{frame}
 
 % ============================================================
-% Slide 2 -- Motivation
+% Slide 2 -- The question
 % ============================================================
-\begin{frame}{When worlds change, how do agents adapt?}
+\begin{frame}{The question: three ways the world can change}
   \begin{columns}[T, onlytextwidth]
     \column{0.32\textwidth}
       \centering
-      \textbf{Reward moves}\\[0.6em]
-      {\Large $\star \rightarrow \star$}\\[0.6em]
-      Goal location shifts.\\ Dynamics unchanged.
+      \textbf{Reward moves}\\[0.4em]
+      {\Large $\star \rightarrow \star$}\\[0.3em]
+      {\small Goal location shifts.\\Dynamics unchanged.}
     \column{0.32\textwidth}
       \centering
-      \textbf{Wall appears}\\[0.6em]
-      {\Large $\square\mspace{-14mu}{\rule{0.08em}{1.2em}}$}\\[0.6em]
-      Transition graph changes.\\ Reward unchanged.
+      \textbf{Wall appears}\\[0.4em]
+      {\Large $\square\mspace{-14mu}{\rule{0.08em}{1.2em}}$}\\[0.3em]
+      {\small Transition graph changes.\\Reward unchanged.}
     \column{0.32\textwidth}
       \centering
-      \textbf{Observation shifts}\\[0.6em]
-      {\Large \textcolor{gray!60}{\textbullet}\,\textcolor{gray!60}{\textbullet}\,\textcolor{gray!60}{\textbullet}}\\[0.6em]
-      Pixels differ, latent state same.\\ (Hippocampal remapping.)
+      \textbf{Observation shifts}\\[0.4em]
+      {\Large \textcolor{gray!60}{\textbullet}\,\textcolor{gray!60}{\textbullet}\,\textcolor{gray!60}{\textbullet}}\\[0.3em]
+      {\small Pixels differ, state same.\\(Hippocampal remapping.)}
   \end{columns}
-  \vspace{1em}
-  \begin{alertblock}{Question}
-    Do three standard deep-RL architectures show \emph{different} adaptation signatures along these three axes, as neuroscience predicts?
-  \end{alertblock}
+  \vspace{0.5em}
+  \begin{center}
+    \includegraphics[width=0.82\linewidth]{env_conditions.png}
+  \end{center}
+  \vspace{-0.3em}
+  \centerline{\footnotesize Five conditions, three axes of change. Can three RL architectures tell them apart?}
 \end{frame}
 
 % ============================================================
-% Slide 3 -- Neuroscience anchor
+% Slide 3 -- Neuroscience anchor (two cards)
 % ============================================================
-\begin{frame}{Neuroscience anchor: two key frameworks}
+\begin{frame}{What the neuroscience says}
   \begin{columns}[T]
-    \column{0.5\textwidth}
-      \textbf{Momennejad et al., 2017}\\
-      \emph{Nat.\ Hum.\ Behav.}
-      \begin{itemize}
-        \item Humans rapidly revalue after \emph{reward} change.
-        \item Slower after \emph{transition} change.
-        \item Predicted by the Successor Representation: $Q = \langle\psi, \mathbf{w}\rangle$.
-        \item Reward revaluation $=$ update $\mathbf{w}$ only.
-      \end{itemize}
-    \column{0.5\textwidth}
-      \textbf{Sanders, Wilson \& Gershman, 2020}\\
-      \emph{eLife}
-      \begin{itemize}
-        \item Hippocampal remapping as \emph{hidden-state inference}.
-        \item \textbf{Rate} remapping: graded change under same state.
-        \item \textbf{Global} remapping: obs$\rightarrow$state map replaced.
-      \end{itemize}
+    \column{0.49\textwidth}
+      \begin{block}{Momennejad et al., 2017 \hfill \emph{Nat.\ Hum.\ Behav.}}
+        \footnotesize
+        Humans revalue \emph{fast} after reward change, \emph{slow} after transition change.\\[0.3em]
+        Explained by the Successor Representation:
+        \[ Q(s,a) = \langle \psi(s,a),\; \mathbf{w}\rangle \]
+        Reward revaluation is just updating $\mathbf{w}$.
+      \end{block}
+    \column{0.49\textwidth}
+      \begin{block}{Sanders, Wilson \& Gershman, 2020 \hfill \emph{eLife}}
+        \footnotesize
+        Hippocampal remapping as \emph{hidden-state inference}.\\[0.3em]
+        \textbf{Rate remapping:} graded change under the same state.\\[0.2em]
+        \textbf{Global remapping:} the obs$\rightarrow$state map itself is replaced.
+      \end{block}
   \end{columns}
-  \vspace{0.8em}
-  \textbf{Our job:} build a gridworld where these three axes are \emph{cleanly separable}, then see what each agent does.
+  \vspace{0.6em}
+  \centerline{\footnotesize These two papers give me the predictions my five conditions directly operationalize.}
 \end{frame}
 
 % ============================================================
-% Slide 4 -- RL recap
+% Slide 4 -- Where this builds on the class (class lineage)
 % ============================================================
-\begin{frame}{RL recap (Tutorial 05): state, action, reward, policy, value}
-  \begin{columns}[T, onlytextwidth]
-    \column{0.55\textwidth}
-      \begin{itemize}
-        \item \textbf{State} $s$: where the agent is (here: an 8$\times$8 image).
-        \item \textbf{Action} $a$: up/down/left/right.
-        \item \textbf{Reward} $r$: $+1$ at goal, $-0.01$ per step.
-        \item \textbf{Policy} $\pi(a|s)$: what to do.
-        \item \textbf{Value} $Q(s,a)$: expected future reward.
-      \end{itemize}
-      \[
-        Q(s,a) = \mathbb{E}\Big[\sum_{t=0}^{\infty}\gamma^t r_t \,\Big|\, s_0{=}s, a_0{=}a\Big]
-      \]
-    \column{0.45\textwidth}
-      \textbf{CNN (Tutorial 08) feeds everything.}\\[0.5em]
-      Pixel image $\rightarrow$ conv layers $\rightarrow$ feature vector $\phi(s)$.\\[0.6em]
-      All three agents share this encoder. They differ only in what they do with $\phi(s)$.
-  \end{columns}
+\begin{frame}{Where this builds on the class}
+  \centering
+  \begin{tikzpicture}[
+      tut/.style={draw, rounded corners, minimum width=2.7cm, minimum height=2.0cm, align=center, font=\small, fill=blue!5},
+      lbl/.style={font=\footnotesize\bfseries},
+      >=Latex,
+    ]
+    \node[tut] (t5) {\lbl Tutorial 05\\[0.2em]\footnotesize MDPs\\$(s,a,r,\pi,V,Q)$};
+    \node[tut, right=0.5cm of t5] (t6) {\lbl Tutorial 06\\[0.2em]\footnotesize TD learning\\\& the brain};
+    \node[tut, right=0.5cm of t6] (t7) {\lbl Tutorial 07\\[0.2em]\footnotesize MLPs\\feedforward nets};
+    \node[tut, right=0.5cm of t7] (t8) {\lbl Tutorial 08\\[0.2em]\footnotesize CNNs\\pixels $\to$ $\phi(s)$};
+  \end{tikzpicture}
+  \vspace{1.0em}
+  \begin{itemize}\setlength\itemsep{0.1em}\small
+    \item Tutorial 05 gave me the MDP vocabulary for describing the task.
+    \item Tutorial 06 tied value learning to neuroscience -- the bridge to Momennejad \& Sanders.
+    \item Tutorial 07 + 08 gave me the function approximators: MLP heads on top of a CNN encoder.
+  \end{itemize}
+  \vspace{0.4em}
+  \centerline{\footnotesize \textbf{My project adds three different heads on the same encoder and compares what each one learns.}}
 \end{frame}
 
 % ============================================================
-% Slide 5 -- Three agents, one encoder
+% Slide 5 -- Three agents, one encoder (annotated with paper citations)
 % ============================================================
 \begin{frame}{Three agents, one shared CNN encoder}
   \centering
@@ -118,78 +125,85 @@
       node distance=0.8cm and 1.0cm,
       box/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.9cm, align=center, font=\small},
       encoder/.style={draw, rounded corners, fill=blue!10, minimum width=2.5cm, minimum height=1.2cm, align=center, font=\small\bfseries},
-      head/.style={draw, rounded corners, minimum width=3.2cm, minimum height=0.9cm, align=center, font=\small},
+      head/.style={draw, rounded corners, minimum width=3.4cm, minimum height=0.95cm, align=center, font=\small},
+      cite/.style={font=\scriptsize\itshape, text=gray!70},
       >=Latex,
     ]
     \node[box] (obs) {Obs (3$\times$8$\times$8)};
     \node[encoder, right=of obs] (enc) {CNN encoder\\$\phi(s)$};
-    \node[head, fill=orange!20, right=1.8cm of enc, yshift=1.4cm] (ppo) {\textbf{PPO head}\\actor $\pi(a|s)$ + critic $V(s)$};
-    \node[head, fill=green!20, right=1.8cm of enc] (sr) {\textbf{SR head}\\$\psi(s,a)$, $\mathbf{w}$\,:\; $Q{=}\langle\psi,\mathbf{w}\rangle$};
-    \node[head, fill=purple!20, right=1.8cm of enc, yshift=-1.4cm] (rep) {\textbf{Replay head}\\$Q(s,a)$ + replay buffer};
+    \node[head, fill=ppoBlue!20, right=1.8cm of enc, yshift=1.5cm] (ppo) {\textbf{PPO head}\\actor $\pi(a|s)$ + critic $V(s)$};
+    \node[head, fill=srOrange!25, right=1.8cm of enc] (sr) {\textbf{SR head}\\$\psi(s,a)$, $\mathbf{w}$:\; $Q{=}\langle\psi,\mathbf{w}\rangle$};
+    \node[head, fill=replayGreen!20, right=1.8cm of enc, yshift=-1.5cm] (rep) {\textbf{Replay head}\\$Q(s,a)$ + replay buffer};
+    \node[cite, right=0.1cm of ppo] {Schulman 2017};
+    \node[cite, right=0.1cm of sr]  {Dayan 1993, Momennejad 2017};
+    \node[cite, right=0.1cm of rep] {Sutton 1990, Mnih 2015};
     \draw[->] (obs) -- (enc);
     \draw[->] (enc.east) -- (ppo.west);
     \draw[->] (enc.east) -- (sr.west);
     \draw[->] (enc.east) -- (rep.west);
   \end{tikzpicture}
-  \vspace{0.5em}
-  \begin{itemize}\setlength\itemsep{0.1em}
-    \item Same pixel$\rightarrow$feature pipeline, three different credit-assignment mechanisms.
-    \item Each mechanism has a \emph{predicted} signature on one of the three axes.
-  \end{itemize}
+  \vspace{0.3em}
+  \centerline{\footnotesize Same pixel$\rightarrow$feature pipeline. Three different credit-assignment mechanisms.}
 \end{frame}
 
 % ============================================================
-% Slide 6 -- SR intuition
+% Slide 6 -- SR in one equation
 % ============================================================
-\begin{frame}{Successor Representation: factorized value}
+\begin{frame}{Successor Representation in one equation}
+  \vspace{0.4em}
+  \centerline{\Large $Q(s,a) \;=\; \langle\, \psi(s,a),\; \mathbf{w}\,\rangle$}
+  \vspace{1.0em}
   \begin{columns}[T, onlytextwidth]
-    \column{0.55\textwidth}
-      \textbf{Standard TD:} learn $Q(s,a)$ directly.\\
-      \textbf{SR:} factorize it.
-      \[
-        \boxed{\; Q(s,a) = \langle \psi(s,a),\; \mathbf{w}\rangle \;}
-      \]
-      \begin{itemize}\setlength\itemsep{0.2em}
-        \item $\psi(s,a)$: expected discounted future features. \emph{Reward-agnostic.}
-        \item $\mathbf{w}$: reward weights.
-        \item If reward changes $\rightarrow$ update $\mathbf{w}$ only, leaving $\psi$ fixed.
-      \end{itemize}
-    \column{0.45\textwidth}
-      \textbf{Why care?}\\[0.3em]
-      Momennejad 2017 predicts SR-style agents should \emph{specifically} accelerate at reward revaluation, compared to model-free baselines.\\[0.6em]
-      We will test the ``$\mathbf{w}$-only'' variant as a direct analog of the human experiment.
+    \column{0.49\textwidth}
+      \centering
+      \textcolor{srOrange}{\textbf{$\psi(s,a)$}}\\[0.2em]
+      ``\emph{where you'll go}''\\[0.1em]
+      \small expected discounted future features.\\ Reward-agnostic.
+    \column{0.49\textwidth}
+      \centering
+      \textcolor{srOrange}{\textbf{$\mathbf{w}$}}\\[0.2em]
+      ``\emph{what you want}''\\[0.1em]
+      \small the reward weights.\\ Updated \emph{independently} of $\psi$.
   \end{columns}
+  \vspace{1.0em}
+  \begin{alertblock}{The one-line trick}
+    \centerline{\textbf{When reward changes: update $\mathbf{w}$, keep $\psi$.}}
+    \small\centerline{This is Momennejad 2017's prediction. My \texttt{wonly} variant tests it directly.}
+  \end{alertblock}
 \end{frame}
 
 % ============================================================
-% Slide 7 -- Five conditions
+% Slide 7 -- Five conditions (with axis legend)
 % ============================================================
 \begin{frame}{Environment: one grid, five conditions}
   \centering
-  \includegraphics[width=0.92\linewidth]{env_conditions.png}\\[0.4em]
-  \small
-  \texttt{stable} / \texttt{reward\_change} (goal moves) / \texttt{transition\_change} (wall moves) /
-  \texttt{obs\_visual} (rate remapping: distractor pixels) / \texttt{obs\_remap} (global remapping: channels permuted).
+  \includegraphics[width=0.92\linewidth]{env_conditions.png}\\[0.6em]
+  \begin{tikzpicture}[font=\footnotesize]
+    \node[fill=blue!15, rounded corners, inner sep=4pt] (A) {Layout change (3 conditions)};
+    \node[fill=orange!20, rounded corners, inner sep=4pt, right=0.8cm of A] (B) {Observation change (2 conditions)};
+  \end{tikzpicture}
+  \vspace{0.3em}
+  \centerline{\footnotesize \texttt{stable}, \texttt{reward\_change}, \texttt{transition\_change} $|$ \texttt{obs\_visual} (rate), \texttt{obs\_remap} (global)}
 \end{frame}
 
 % ============================================================
-% Slide 8 -- Hypotheses
+% Slide 8 -- Five hypotheses (card grid)
 % ============================================================
-\begin{frame}{Hypotheses}
-  \small
-  \begin{tabular}{@{}c p{0.58\linewidth} p{0.25\linewidth}@{}}
-    \toprule
-    & Prediction & Basis \\
-    \midrule
-    H1 & SR adapts fastest to \texttt{reward\_change}                                         & Momennejad 2017 \\
-    H2 & Replay adapts fastest to \texttt{transition\_change}                                 & Sutton (Dyna) 1990 \\
-    H3 & H1 $\wedge$ H2 $\Rightarrow$ crossover dissociation                                  & Critical test \\
-    H4 & \texttt{obs\_visual}: zero-shot drops, few-shot recovers                              & Rate remapping \\
-    H5 & \texttt{obs\_remap} strictly harder than \texttt{obs\_visual}                         & Global remapping \\
-    \bottomrule
-  \end{tabular}
-  \vspace{0.8em}
-  \textbf{Each slide of results will reference one of these.}
+\begin{frame}{Five hypotheses -- who should win where?}
+  \centering
+  \begin{tikzpicture}[
+      card/.style={draw, rounded corners, minimum width=5.6cm, minimum height=1.05cm, align=left, font=\footnotesize, inner sep=5pt},
+      winner/.style={font=\footnotesize\bfseries},
+      basis/.style={font=\scriptsize\itshape, text=gray!65},
+    ]
+    \node[card, fill=srOrange!15] (h1) {\winner H1 (reward): SR adapts fastest \hfill \basis Momennejad 2017};
+    \node[card, fill=replayGreen!15, below=0.15cm of h1] (h2) {\winner H2 (transition): Replay adapts fastest \hfill \basis Sutton 1990 (Dyna)};
+    \node[card, fill=gray!10, below=0.15cm of h2] (h3) {\winner H3: H1 $\wedge$ H2 $\Rightarrow$ crossover dissociation \hfill \basis critical test};
+    \node[card, fill=blue!10, below=0.15cm of h3] (h4) {\winner H4 (\texttt{obs\_visual}): zero-shot drops, few-shot recovers \hfill \basis Sanders 2020, rate};
+    \node[card, fill=blue!10, below=0.15cm of h4] (h5) {\winner H5: \texttt{obs\_remap} strictly harder than \texttt{obs\_visual} \hfill \basis Sanders 2020, global};
+  \end{tikzpicture}
+  \vspace{0.4em}
+  \centerline{\footnotesize Each results slide maps back to one of these five.}
 \end{frame}
 
 % ============================================================
@@ -199,30 +213,57 @@
   \begin{columns}[T, onlytextwidth]
     \column{0.55\textwidth}
       \textbf{Two phases per (agent, seed):}
-      \begin{enumerate}\setlength\itemsep{0.1em}
+      \begin{enumerate}\setlength\itemsep{0.1em}\small
         \item Train on \texttt{stable} to convergence.
         \item \textbf{Zero-shot eval} on all 5 conditions.
-        \item \textbf{Few-shot adaptation} on each changed condition (20 PPO batches / 60 SR,Replay episodes).
+        \item \textbf{Few-shot adaptation} on each changed condition (20 PPO batches / 60 SR, Replay episodes).
       \end{enumerate}
-      3 seeds $\times$ 3 agents $\times$ 5 conditions.
+      \small 3 seeds $\times$ 3 agents $\times$ 5 conditions.
     \column{0.45\textwidth}
       \textbf{Four metrics:}
-      \begin{itemize}\setlength\itemsep{0.1em}
+      \begin{itemize}\setlength\itemsep{0.1em}\small
         \item Greedy-success rate (snapshot).
         \item \textbf{AUC} of success over adaptation window.
-        \item \textbf{$t_{0.5}$}: first step success $\geq 0.5$.
+        \item \textbf{$t_{0.5}$}: first step with success $\geq 0.5$.
         \item \textbf{Linear probe} on CNN features (agent pos, goal id, distance).
       \end{itemize}
   \end{columns}
 \end{frame}
 
 % ============================================================
-% Slide 10 -- Results I: H2/H4/H5
+% Slide 10 -- Stable training converges (NEW)
 % ============================================================
-\begin{frame}{Results I -- Replay dominates adaptation (H2, H4, H5)}
+\begin{frame}{Stable training: all three agents converge}
   \centering
-  \includegraphics[width=0.82\linewidth]{cross_agent_adaptation.png}\\[0.2em]
-  \small
+  \includegraphics[width=0.82\linewidth]{training_curves.png}\\[0.3em]
+  \footnotesize
+  PPO converges in $\sim$10 batches; Replay by $\sim$150 episodes; SR hits transient 1.0 peaks
+  mid-training but regresses.
+  \vspace{0.3em}
+  \centerline{\textbf{This is the floor the adaptation phase starts from.}}
+\end{frame}
+
+% ============================================================
+% Slide 11 -- Zero-shot: who generalizes? (NEW)
+% ============================================================
+\begin{frame}{Zero-shot: who generalizes?}
+  \centering
+  \includegraphics[width=0.9\linewidth]{zero_shot_eval.png}\\[0.3em]
+  \footnotesize
+  \begin{itemize}\setlength\itemsep{0.05em}
+    \item PPO ceiling on \texttt{stable}, \texttt{transition}, \texttt{obs\_visual}; floor on \texttt{reward\_change}, \texttt{obs\_remap}.
+    \item Replay strong on \texttt{stable}, \texttt{transition}, \texttt{obs\_visual}; floor on \texttt{reward\_change}, \texttt{obs\_remap}.
+    \item SR at or near floor on everything -- the $(1,1)\rightarrow(1,6)$ goal column tie sets up what comes next.
+  \end{itemize}
+\end{frame}
+
+% ============================================================
+% Slide 12 -- Few-shot adaptation (was slide 10)
+% ============================================================
+\begin{frame}{Few-shot adaptation -- Replay dominates (H2, H4, H5)}
+  \centering
+  \includegraphics[width=0.78\linewidth]{cross_agent_adaptation.png}\\[0.2em]
+  \footnotesize
   \begin{itemize}\setlength\itemsep{0.05em}
     \item \textbf{H2 supported}: Replay and PPO tie at $1.00$ on \texttt{transition\_change}.
     \item \textbf{H4 supported}: Replay $0.67 \rightarrow 1.00$ on \texttt{obs\_visual} (rate remapping).
@@ -231,95 +272,94 @@
 \end{frame}
 
 % ============================================================
-% Slide 11 -- Results II: H1 via AUC
+% Slide 13 -- The Momennejad signal (AUC bar chart)
 % ============================================================
-\begin{frame}{Results II -- H1 needs the AUC view}
-  \small
-  \begin{tabular}{@{}l c c c c@{}}
-    \toprule
-    Agent & Reward $\Delta$ & Transition $\Delta$ & Obs Visual & Obs Remap \\
-    \midrule
-    PPO                & $0.15$            & $\mathbf{1.00}$ & $0.83$          & $0.28$ \\
-    SR (full)          & $0.12$            & $0.14$          & $0.08$          & $0.08$ \\
-    \textbf{SR (wonly)}& $\mathbf{0.38}$   & ---             & ---             & ---    \\
-    Replay             & $0.44$            & $0.97$          & $\mathbf{0.98}$ & $\mathbf{0.30}$ \\
-    \bottomrule
-  \end{tabular}
-  \vspace{0.8em}
-  \textbf{H1 partially supported.} The snapshot table said ``SR $=0$'' on \texttt{reward\_change}.
-  AUC reveals:\\[0.3em]
-  \centerline{\textbf{SR-wonly $0.38$ \;$>$\; PPO $0.15$ \quad and approaches Replay $0.44$.}}
+\begin{frame}{The Momennejad signal hiding in the data}
+  \centering
+  \begin{tikzpicture}[x=1.6cm, y=0.08cm, font=\small]
+    % axis
+    \draw[->] (-0.2,0) -- (5.0,0) node[right]{};
+    \draw[->] (0,-2) -- (0,55) node[above]{};
+    % y-axis ticks
+    \foreach \y in {0, 25, 50} {
+      \draw (-0.05,\y) -- (0,\y);
+      \node[left, font=\scriptsize] at (-0.1, \y) {0.\y};
+    }
+    \node[rotate=90, font=\scriptsize] at (-0.9, 25) {AUC on \texttt{reward\_change}};
+    % bars
+    \fill[ppoBlue]       (0.30,0) rectangle (0.90,15);
+    \fill[srOrange!70]   (1.30,0) rectangle (1.90,12);
+    \fill[srOrange]      (2.30,0) rectangle (2.90,38);
+    \fill[replayGreen]   (3.30,0) rectangle (3.90,44);
+    % value labels on top
+    \node[above, font=\scriptsize\bfseries] at (0.60, 15) {0.15};
+    \node[above, font=\scriptsize\bfseries] at (1.60, 12) {0.12};
+    \node[above, font=\scriptsize\bfseries] at (2.60, 38) {\textcolor{srOrange}{\textbf{0.38}}};
+    \node[above, font=\scriptsize\bfseries] at (3.60, 44) {0.44};
+    % x-axis labels
+    \node[below, font=\scriptsize, align=center] at (0.60, 0) {PPO};
+    \node[below, font=\scriptsize, align=center] at (1.60, 0) {SR\\full};
+    \node[below, font=\scriptsize\bfseries, align=center] at (2.60, 0) {SR\\\texttt{wonly}};
+    \node[below, font=\scriptsize, align=center] at (3.60, 0) {Replay};
+    % call-out arrow
+    \draw[->, thick, srOrange] (2.60, 48) .. controls (2.2, 54) .. (1.4, 52)
+      node[midway, above, font=\scriptsize\bfseries]{\color{srOrange}Momennejad direction recovered};
+  \end{tikzpicture}
   \vspace{0.3em}
-  The Momennejad direction is there -- it was hidden by end-of-phase regression.
+  \centerline{\footnotesize The end-of-phase snapshot table said ``SR $=0$''. The AUC view says: \textbf{SR-\texttt{wonly} $>$ PPO}, approaches Replay.}
+  \centerline{\footnotesize \textbf{H1 partially supported} -- the signal was hidden by transient regression, not absent.}
 \end{frame}
 
 % ============================================================
-% Slide 12 -- Representation probe
+% Slide 14 -- Probe + diagnosis (merged)
 % ============================================================
-\begin{frame}{Results III -- Representation probe}
+\begin{frame}{The probe tells us what SR actually learned}
   \begin{columns}[T]
-    \column{0.50\textwidth}
+    \column{0.42\textwidth}
       \centering
-      \includegraphics[width=\linewidth]{representation_probe.png}
-    \column{0.50\textwidth}
-      \small
+      \includegraphics[width=\linewidth]{representation_probe.png}\\[0.2em]
+      {\scriptsize mean across seeds; $R^2$ except goal-col = accuracy.}
+    \column{0.56\textwidth}
+      \footnotesize
       \begin{tabular}{@{}l c c c@{}}
         \toprule
-        Target & PPO & SR & Replay \\
+        Target & PPO & \textcolor{srOrange}{\textbf{SR}} & Replay \\
         \midrule
-        agent row $R^2$       & $0.79$ & $0.68$ & $0.69$ \\
-        agent col $R^2$       & $0.73$ & $\mathbf{-0.15}$ & $0.70$ \\
-        goal col acc          & $0.59$ & $\mathbf{0.94}$ & $0.37$ \\
-        Manhattan $R^2$       & $-3.1$ & $\mathbf{+0.50}$ & $-1.4$ \\
+        agent row $R^2$  & $0.79$ & $0.68$ & $0.69$ \\
+        agent col $R^2$  & $0.73$ & \textcolor{srOrange}{$\mathbf{-0.15}$} & $0.70$ \\
+        goal col acc     & $0.59$ & \textcolor{srOrange}{$\mathbf{0.94}$}   & $0.37$ \\
+        Manhattan $R^2$  & $-3.1$ & \textcolor{srOrange}{$\mathbf{+0.50}$}  & $-1.4$ \\
         \bottomrule
       \end{tabular}
       \vspace{0.5em}
-      \begin{itemize}\setlength\itemsep{0.1em}
-        \item SR \emph{leads} on goal identity and distance.
-        \item SR \emph{worst} at agent column -- collapsed below the null predictor.
-        \item A trade-off, not a collapse.
-      \end{itemize}
+
+      \begin{tikzpicture}[
+          cell/.style={draw, rounded corners, minimum width=3.3cm, minimum height=1.5cm, align=center, font=\scriptsize},
+        ]
+        \node[cell, fill=srOrange!15] (L) {\textbf{What SR learned}\\goal identity ($0.94$)\\distance-to-goal ($+0.50$)};
+        \node[cell, fill=gray!10, right=0.25cm of L] (N) {\textbf{What SR needed}\\agent-column ($-0.15$)\\to break the Q-tie};
+      \end{tikzpicture}
   \end{columns}
+  \vspace{0.2em}
+  \centerline{\footnotesize \textbf{Diagnosis: deep-SF policy-extraction fragility, not representation collapse.}\; Fix: action-conditioned $\phi(s,a)$ + Q-margin term (Barreto 2017, Lehnert 2024).}
 \end{frame}
 
 % ============================================================
-% Slide 13 -- Diagnosis
+% Slide 15 -- Takeaways
 % ============================================================
-\begin{frame}{Diagnosis -- deep-SF policy-extraction fragility}
-  \textbf{What we ruled out:}
-  \begin{itemize}\setlength\itemsep{0.1em}
-    \item Training budget ($300\rightarrow500$ episodes, still regresses).
-    \item Representation collapse (Lehnert 2024 ablation replicates; patched run still shows regression).
-    \item Loss weighting (rebalanced $\alpha_r$ $20\rightarrow5$: better probe, same policy problem).
-  \end{itemize}
-  \vspace{0.5em}
-  \textbf{What the probe tells us:} SR's encoder compresses \emph{agent column}. The optimal $(6,1)\rightarrow(1,6)$ path needs column discrimination $\rightarrow$ Q-values tie $\rightarrow$ transient 1.0 peaks, not persistent policies.
-  \vspace{0.5em}
-  \begin{alertblock}{Concrete fixes (out of scope for this project)}
-    \begin{itemize}\setlength\itemsep{0em}
-      \item Action-conditioned features $\phi(s,a)$ (Barreto 2017, Lehnert 2024 \S 3).
-      \item Explicit Q-margin regularizer.
-    \end{itemize}
-  \end{alertblock}
-\end{frame}
-
-% ============================================================
-% Slide 14 -- Takeaways
-% ============================================================
-\begin{frame}{Takeaways}
-  \begin{itemize}\setlength\itemsep{0.3em}
+\begin{frame}{Takeaways \& what's next}
+  \begin{itemize}\setlength\itemsep{0.4em}
     \item \textbf{Five-condition testbed} cleanly separates reward / transition / observation change.
     \item \textbf{H2, H4, H5 supported cleanly.} H1 supported via AUC; H3 not.
-    \item \textbf{Representation probe as diagnostic:} turned an ambiguous SR result into an architectural finding.
-    \item \textbf{Honest negative:} SR revaluation mechanism works; deep-SF policy extraction is the binding constraint.
+    \item \textbf{Probe-as-diagnostic:} turned an ambiguous SR result into an architectural finding.
     \item \textbf{Future work:} action-conditioned $\phi(s,a)$; Q-margin term; adaptation-phase LR tuning for PPO.
   \end{itemize}
   \vspace{0.8em}
-  \centerline{\textbf{Thank you -- questions?}}
+  \centerline{\Large\textbf{Thank you --- questions?}}
 \end{frame}
 
 % ============================================================
-% Backup slide -- adaptation grid
+% Backup slides
 % ============================================================
 \appendix
 \begin{frame}{Backup: full adaptation grid}
