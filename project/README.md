@@ -70,7 +70,7 @@ export PYTHONPATH="."
 
 # Three parallel terminals, one per agent:
 python scripts/train_ppo.py     2>&1 | tee results/ppo_run.log      # ~20 min
-python scripts/train_sr.py      2>&1 | tee results/sr_run.log       # ~45 min
+python scripts/train_sr.py      2>&1 | tee results/sr_run.log       # ~60 min
 python scripts/train_replay.py  2>&1 | tee results/replay_run.log   # ~60 min
 
 # Ablation (after SR finishes, or any time):
