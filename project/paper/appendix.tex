@@ -1,7 +1,7 @@
 \section{Agent Hyperparameters}
 \label{app:hyperparams}
 
-All three agents share a convolutional encoder with two 3$\times$3 conv layers (channels $3\rightarrow 16\rightarrow 32$), ReLU activations, and a final linear layer mapping flattened features to a \texttt{feature\_dim}-sized embedding. PPO and Replay use \texttt{feature\_dim}=128; SR uses \texttt{feature\_dim}=64 (and $\ell_2$-normalizes the embedding). Optimizer: Adam.
+All three agents sit on top of the same convolutional encoder: two 3$\times$3 conv layers (channels $3\rightarrow 16\rightarrow 32$) with ReLU activations, followed by a linear layer that flattens the feature map down to a \texttt{feature\_dim}-sized embedding. PPO and Replay both use \texttt{feature\_dim}=128; SR uses 64, and $\ell_2$-normalizes the embedding on the way out. Optimizer is Adam throughout.
 
 \begin{table}[h]
 \centering
@@ -116,7 +116,7 @@ Replay & 2 & 0.46 & 0.47 & 0.58 & $-0.14$ \\
 \section{Reproducing the Experiments}
 \label{app:reproduce}
 
-From \texttt{project/} (\texttt{PYTHONPATH=.}):
+Everything below runs from \texttt{project/} with \texttt{PYTHONPATH=.} exported:
 
 \begin{verbatim}
 # (1) Stable + zero-shot + adaptation for each agent (3 seeds each)
@@ -134,4 +134,4 @@ python scripts/probe_representations.py  # ~30 s
 jupyter nbconvert --to notebook --execute notebooks/analysis.ipynb --inplace
 \end{verbatim}
 
-Outputs: \texttt{results/csv/} (training/evaluation/adaptation/probe CSVs), \texttt{results/figures/} (all figures referenced here), \texttt{results/summary\_table.csv} (Table~\ref{tab:summary}), \texttt{results/adaptation\_metrics.csv} (Table~\ref{tab:auc}, Table~\ref{tab:per-seed-auc}), and \texttt{results/csv/probe\_results.csv} (Table~\ref{tab:probe}, Table~\ref{tab:probe-per-seed}).
+Those four steps populate \texttt{results/csv/} with the training / evaluation / adaptation / probe CSVs, write every figure referenced in the paper into \texttt{results/figures/}, and produce \texttt{results/summary\_table.csv} (Table~\ref{tab:summary}), \texttt{results/adaptation\_metrics.csv} (Tables~\ref{tab:auc} and \ref{tab:per-seed-auc}), and \texttt{results/csv/probe\_results.csv} (Tables~\ref{tab:probe} and \ref{tab:probe-per-seed}).
