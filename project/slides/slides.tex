@@ -252,8 +252,8 @@
   \footnotesize
   \begin{itemize}\setlength\itemsep{0.05em}
     \item PPO ceiling on \texttt{stable}, \texttt{transition}, \texttt{obs\_visual}; floor on \texttt{reward\_change}, \texttt{obs\_remap}.
-    \item Replay strong on \texttt{stable}, \texttt{transition}, \texttt{obs\_visual}; floor on \texttt{reward\_change}, \texttt{obs\_remap}.
-    \item SR at or near floor on everything -- the $(1,1)\rightarrow(1,6)$ goal column tie sets up what comes next.
+    \item Replay: ceiling on \texttt{stable}; $2/3$ seeds generalize on \texttt{transition} and \texttt{obs\_visual}; floor on \texttt{reward\_change}, \texttt{obs\_remap}.
+    \item SR at or near floor everywhere -- foreshadows the column-discrimination problem we diagnose on slide 14.
   \end{itemize}
 \end{frame}
 
@@ -265,9 +265,9 @@
   \includegraphics[width=0.78\linewidth]{cross_agent_adaptation.png}\\[0.2em]
   \footnotesize
   \begin{itemize}\setlength\itemsep{0.05em}
-    \item \textbf{H2 supported}: Replay and PPO tie at $1.00$ on \texttt{transition\_change}.
-    \item \textbf{H4 supported}: Replay $0.67 \rightarrow 1.00$ on \texttt{obs\_visual} (rate remapping).
-    \item \textbf{H5 supported}: every agent's \texttt{obs\_remap} adapted $<$ \texttt{obs\_visual} adapted.
+    \item \textbf{H2 directionally supported}: Replay and PPO both reach $1.00$ on \texttt{transition\_change} -- a tie near ceiling.
+    \item \textbf{H4 supported for Replay} ($0.67 \rightarrow 1.00$ on \texttt{obs\_visual}, rate remapping); partial for PPO ($1.00 \rightarrow 0.56$, stable-LR fine-tune regression).
+    \item \textbf{H5 supported for Replay} ($0.50$ vs $1.00$); PPO ties; SR near floor on both.
   \end{itemize}
 \end{frame}
 
@@ -350,7 +350,7 @@
 \begin{frame}{Takeaways \& what's next}
   \begin{itemize}\setlength\itemsep{0.4em}
     \item \textbf{Five-condition testbed} cleanly separates reward / transition / observation change.
-    \item \textbf{H2, H4, H5 supported cleanly.} H1 supported via AUC; H3 not.
+    \item \textbf{H2, H4, H5 supported in direction} -- most cleanly for Replay. H1 supported via AUC; H3 not.
     \item \textbf{Probe-as-diagnostic:} turned an ambiguous SR result into an architectural finding.
     \item \textbf{Future work:} action-conditioned $\phi(s,a)$; Q-margin term; adaptation-phase LR tuning for PPO.
   \end{itemize}
