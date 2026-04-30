@@ -1,3 +1,20 @@
+"""Train action-conditioned deep SF (slide-15 future-work fix #3).
+
+Mirrors the protocol of scripts/train_sr.py: stable training on the `stable`
+condition, then few-shot adaptation on each of the four changed conditions
+(reward_change full + wonly, transition_change, obs_visual, obs_remap).
+
+Outputs sit under variant tag "ac" by default so they don't collide with
+the baseline SR run:
+    sr_ac_seed{s}_train.csv
+    sr_ac_seed{s}_eval_{cond}.csv
+    sr_ac_seed{s}_adapt_{cond}_{full|wonly}.csv
+    sr_ac_seed{s}_best.pt
+    sr_ac_seed{s}_stable_pretrain.pt
+
+Q-margin support is preserved: pass q_margin_weight > 0 to combine the two
+fixes (action-conditioned features + Q-margin hinge).
+"""
 from __future__ import annotations
 
 import random
@@ -9,11 +26,11 @@ import torch
 import torch.nn.functional as F
 from torch.optim import Adam
 
-from src.algorithms.sr import (
-    SRNet,
-    SRBatch,
-    compute_sr_loss,
-    freeze_encoder_and_sr_head,
+from src.algorithms.sr_ac import (
+    SRACNet,
+    SRACBatch,
+    compute_sr_ac_loss,
+    freeze_dynamics,
     hard_update,
     select_action,
     soft_update,
@@ -29,7 +46,6 @@ from src.common.adaptation import (
     make_env,
     STABLE,
 )
-from src.envs.gridworld import GridWorldEnv
 
 
 SEEDS = [0, 1, 2]
@@ -48,14 +64,14 @@ EVAL_INTERVAL = 25
 ADAPT_EVAL_INTERVAL = 5
 N_EVAL_EPISODES = 20
 
-# Q-margin regularizer (slide-15 future-work fix #2). Weight 0.0 reproduces
-# the baseline run; raise it to enable the hinge penalty on small Q-gaps.
 Q_MARGIN_WEIGHT = 0.0
 Q_MARGIN = 0.1
 
+AGENT_PREFIX = "sr_ac"
+
 
 @dataclass
-class SRReplayTransition:
+class SRACReplayTransition:
     obs: torch.Tensor
     action: int
     reward: float
@@ -63,31 +79,31 @@ class SRReplayTransition:
     done: float
 
 
-class SRReplayBuffer:
+class SRACReplayBuffer:
     def __init__(self, capacity: int = 5000):
         self.buffer: deque = deque(maxlen=capacity)
 
-    def add(self, transition: SRReplayTransition) -> None:
+    def add(self, transition: SRACReplayTransition) -> None:
         self.buffer.append(transition)
 
     def __len__(self) -> int:
         return len(self.buffer)
 
-    def sample(self, batch_size: int, device: str = "cpu") -> SRBatch:
+    def sample(self, batch_size: int, device: str = "cpu") -> SRACBatch:
         batch = random.sample(self.buffer, batch_size)
         obs = torch.stack([t.obs for t in batch]).to(device)
         actions = torch.tensor([t.action for t in batch], dtype=torch.long, device=device)
         rewards = torch.tensor([t.reward for t in batch], dtype=torch.float32, device=device)
         next_obs = torch.stack([t.next_obs for t in batch]).to(device)
         dones = torch.tensor([t.done for t in batch], dtype=torch.float32, device=device)
-        return SRBatch(obs=obs, actions=actions, rewards=rewards, next_obs=next_obs, dones=dones)
+        return SRACBatch(obs=obs, actions=actions, rewards=rewards, next_obs=next_obs, dones=dones)
 
 
 def obs_from_td(td, device: str = "cpu") -> torch.Tensor:
     return td["observation"].to(device)
 
 
-def save_sr_checkpoint(model, target_model, optimizer, tag: str, out_dir: Path) -> None:
+def save_checkpoint(model, target_model, optimizer, tag: str, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     torch.save(
         {
@@ -100,15 +116,19 @@ def save_sr_checkpoint(model, target_model, optimizer, tag: str, out_dir: Path) 
     )
 
 
-def compute_reward_only_loss(model: SRNet, obs: torch.Tensor, rewards: torch.Tensor):
+def compute_reward_only_loss(model: SRACNet, obs: torch.Tensor, actions: torch.Tensor, rewards: torch.Tensor):
+    """w-only adaptation loss. Predict r from phi(s, a_taken) with everything
+    except w frozen."""
     with torch.no_grad():
-        phi = model.encode(obs)
-    pred_reward = torch.einsum("bd,d->b", phi, model.reward_weights)
+        phi_sa_all = model.action_features(obs)                              # [B, A, d]
+    idx = torch.arange(obs.shape[0], device=obs.device)
+    phi_sa = phi_sa_all[idx, actions.long()]                                 # [B, d]
+    pred_reward = torch.einsum("bd,d->b", phi_sa, model.reward_weights)
     return F.mse_loss(pred_reward, rewards)
 
 
 @torch.no_grad()
-def evaluate_sr(model, env, n_episodes: int = 20, device: str = "cpu"):
+def evaluate(model, env, n_episodes: int = 20, device: str = "cpu"):
     model.eval()
     successes, returns, steps_list = 0, [], []
     for _ in range(n_episodes):
@@ -145,7 +165,6 @@ def run_stable_training(
     device: str = "cpu",
     q_margin_weight: float = 0.0,
     q_margin: float = 0.1,
-    variant_tag: str = "",
 ):
     torch.manual_seed(seed)
     random.seed(seed)
@@ -153,17 +172,16 @@ def run_stable_training(
     train_env = make_env(STABLE, seed=seed)
     eval_envs = make_all_eval_envs(seed)
 
-    model = SRNet(feature_dim=64, hidden_dim=64, n_actions=4).to(device)
-    target_model = SRNet(feature_dim=64, hidden_dim=64, n_actions=4).to(device)
+    model = SRACNet(feature_dim=64, hidden_dim=64, n_actions=4).to(device)
+    target_model = SRACNet(feature_dim=64, hidden_dim=64, n_actions=4).to(device)
     hard_update(target_model, model)
     unfreeze_all(model)
     unfreeze_all(target_model)
 
     optimizer = Adam(model.parameters(), lr=LR)
-    replay_buffer = SRReplayBuffer(capacity=BUFFER_CAPACITY)
+    replay_buffer = SRACReplayBuffer(capacity=BUFFER_CAPACITY)
 
-    suffix = f"_{variant_tag}" if variant_tag else ""
-    train_csv = csv_dir / f"sr_seed{seed}{suffix}_train.csv"
+    train_csv = csv_dir / f"{AGENT_PREFIX}_seed{seed}_train.csv"
     train_fieldnames = [
         "seed", "episode", "global_step", "epsilon",
         "episode_return", "episode_steps", "buffer_size",
@@ -182,7 +200,8 @@ def run_stable_training(
         td = train_env.reset()
         obs = obs_from_td(td, device=device)
         ep_return, ep_steps = 0.0, 0
-        last_metrics = {"sr_loss": 0.0, "reward_loss": 0.0, "total_loss": 0.0, "mean_q": 0.0}
+        last_metrics = {"sr_loss": 0.0, "reward_loss": 0.0, "total_loss": 0.0, "mean_q": 0.0,
+                        "margin_loss": 0.0, "mean_q_gap": 0.0}
 
         for _ in range(MAX_STEPS_PER_EPISODE):
             global_step += 1
@@ -196,7 +215,7 @@ def run_stable_training(
             reward = float(next_td["reward"].item())
             done = float(bool(next_td["done"].item()))
 
-            replay_buffer.add(SRReplayTransition(
+            replay_buffer.add(SRACReplayTransition(
                 obs=obs.detach().cpu(),
                 action=action,
                 reward=reward,
@@ -207,7 +226,7 @@ def run_stable_training(
             if len(replay_buffer) >= MIN_BUFFER_SIZE:
                 for _ in range(REPLAY_UPDATES_PER_STEP):
                     batch = replay_buffer.sample(batch_size=BATCH_SIZE, device=device)
-                    loss, metrics = compute_sr_loss(
+                    loss, metrics = compute_sr_ac_loss(
                         model, target_model, batch, gamma=GAMMA,
                         q_margin_weight=q_margin_weight, q_margin=q_margin,
                     )
@@ -243,35 +262,35 @@ def run_stable_training(
 
         if episode % EVAL_INTERVAL == 0:
             metrics_by_cond = {
-                name: evaluate_sr(model, env, n_episodes=N_EVAL_EPISODES, device=device)
+                name: evaluate(model, env, n_episodes=N_EVAL_EPISODES, device=device)
                 for name, env in eval_envs.items()
             }
             print(
-                f"[SR seed={seed}{(' ' + variant_tag) if variant_tag else ''} ep={episode}] "
+                f"[SR-AC seed={seed} ep={episode}] "
                 + " ".join(f"{n}={m['success_rate']:.2f}" for n, m in metrics_by_cond.items())
             )
             for name, m in metrics_by_cond.items():
                 append_csv_row(
-                    csv_dir / f"sr_seed{seed}{suffix}_eval_{name}.csv",
+                    csv_dir / f"{AGENT_PREFIX}_seed{seed}_eval_{name}.csv",
                     {"seed": seed, "episode": episode, "condition": name, **m},
                     eval_fieldnames,
                 )
             if metrics_by_cond["stable"]["success_rate"] > best_stable_success:
                 best_stable_success = metrics_by_cond["stable"]["success_rate"]
-                save_sr_checkpoint(model, target_model, optimizer,
-                                   tag=f"sr_seed{seed}{suffix}_best", out_dir=model_dir)
-                print(f"  -> new best stable success={best_stable_success:.2f}, saved sr_seed{seed}{suffix}_best.pt")
+                save_checkpoint(model, target_model, optimizer,
+                                tag=f"{AGENT_PREFIX}_seed{seed}_best", out_dir=model_dir)
+                print(f"  -> new best stable success={best_stable_success:.2f}, saved {AGENT_PREFIX}_seed{seed}_best.pt")
 
-    save_sr_checkpoint(model, target_model, optimizer,
-                       tag=f"sr_seed{seed}{suffix}_stable_pretrain", out_dir=model_dir)
-    print(f"[SR seed={seed}] best_stable_success={best_stable_success:.2f}")
+    save_checkpoint(model, target_model, optimizer,
+                    tag=f"{AGENT_PREFIX}_seed{seed}_stable_pretrain", out_dir=model_dir)
+    print(f"[SR-AC seed={seed}] best_stable_success={best_stable_success:.2f}")
     return model, target_model, eval_envs, best_stable_success
 
 
-def run_sr_adaptation(
+def run_adaptation(
     seed: int,
-    model: SRNet,
-    target_model: SRNet,
+    model: SRACNet,
+    target_model: SRACNet,
     condition,
     adapt_env,
     eval_env,
@@ -280,32 +299,20 @@ def run_sr_adaptation(
     device: str = "cpu",
     q_margin_weight: float = 0.0,
     q_margin: float = 0.1,
-    variant_tag: str = "",
 ) -> None:
-    """Continue training from the stable pretrain for NUM_ADAPT_EPISODES on the changed env.
-
-    variant = "full": all params trainable (standard fine-tune).
-    variant = "wonly": only reward_weights trainable (Momennejad-style
-        revaluation; SR bellman equation assumes dynamics unchanged).
-
-    ``variant_tag`` is appended to ``variant`` in the output CSV name so a
-    Q-margin (or other extension) run can sit alongside the baseline:
-        sr_seed0_adapt_reward_change_full_qmargin.csv
-    """
     if variant == "full":
         unfreeze_all(model)
         unfreeze_all(target_model)
         optimizer = Adam(model.parameters(), lr=LR)
     elif variant == "wonly":
-        freeze_encoder_and_sr_head(model)
-        freeze_encoder_and_sr_head(target_model)
+        freeze_dynamics(model)
+        freeze_dynamics(target_model)
         optimizer = Adam([model.reward_weights], lr=LR)
     else:
         raise ValueError(variant)
 
-    replay_buffer = SRReplayBuffer(capacity=BUFFER_CAPACITY)
-    csv_variant = f"{variant}_{variant_tag}" if variant_tag else variant
-    adapt_csv = csv_dir / f"sr_seed{seed}_adapt_{condition.name}_{csv_variant}.csv"
+    replay_buffer = SRACReplayBuffer(capacity=BUFFER_CAPACITY)
+    adapt_csv = csv_dir / f"{AGENT_PREFIX}_seed{seed}_adapt_{condition.name}_{variant}.csv"
 
     for adapt_ep in range(1, NUM_ADAPT_EPISODES + 1):
         epsilon = 0.1
@@ -323,7 +330,7 @@ def run_sr_adaptation(
             reward = float(next_td["reward"].item())
             done = float(bool(next_td["done"].item()))
 
-            replay_buffer.add(SRReplayTransition(
+            replay_buffer.add(SRACReplayTransition(
                 obs=obs.detach().cpu(),
                 action=action,
                 reward=reward,
@@ -334,12 +341,12 @@ def run_sr_adaptation(
             if len(replay_buffer) >= MIN_BUFFER_SIZE:
                 batch = replay_buffer.sample(batch_size=BATCH_SIZE, device=device)
                 if variant == "full":
-                    loss, _ = compute_sr_loss(
+                    loss, _ = compute_sr_ac_loss(
                         model, target_model, batch, gamma=GAMMA,
                         q_margin_weight=q_margin_weight, q_margin=q_margin,
                     )
                 else:
-                    loss = compute_reward_only_loss(model, batch.obs, batch.rewards)
+                    loss = compute_reward_only_loss(model, batch.obs, batch.actions, batch.rewards)
                 optimizer.zero_grad()
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -357,14 +364,14 @@ def run_sr_adaptation(
 
         eval_m = {"success_rate": "", "avg_return": "", "avg_steps": ""}
         if adapt_ep % ADAPT_EVAL_INTERVAL == 0:
-            m = evaluate_sr(model, eval_env, n_episodes=N_EVAL_EPISODES, device=device)
+            m = evaluate(model, eval_env, n_episodes=N_EVAL_EPISODES, device=device)
             eval_m = {
                 "success_rate": m["success_rate"],
                 "avg_return": m["avg_return"],
                 "avg_steps": m["avg_steps"],
             }
             print(
-                f"[SR adapt seed={seed} cond={condition.name}/{variant} ep={adapt_ep}] "
+                f"[SR-AC adapt seed={seed} cond={condition.name}/{variant} ep={adapt_ep}] "
                 f"success={m['success_rate']:.2f}"
             )
 
@@ -372,9 +379,9 @@ def run_sr_adaptation(
             adapt_csv,
             {
                 "seed": seed,
-                "agent": "sr",
+                "agent": AGENT_PREFIX,
                 "condition": condition.name,
-                "variant": csv_variant,
+                "variant": variant,
                 "step": adapt_ep,
                 "episode_return": ep_return,
                 "episode_steps": ep_steps,
@@ -387,11 +394,7 @@ def run_sr_adaptation(
         )
 
 
-def train(
-    q_margin_weight: float = Q_MARGIN_WEIGHT,
-    q_margin: float = Q_MARGIN,
-    variant_tag: str = "",
-):
+def train(q_margin_weight: float = Q_MARGIN_WEIGHT, q_margin: float = Q_MARGIN):
     device = "cpu"
     results_dir = Path("results")
     csv_dir = results_dir / "csv"
@@ -399,25 +402,19 @@ def train(
     csv_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
 
-    suffix = f"_{variant_tag}" if variant_tag else ""
-
     for seed in SEEDS:
-        print(f"\n========== SR seed={seed} (q_margin_weight={q_margin_weight}, variant={variant_tag or 'baseline'}) ==========")
+        print(f"\n========== SR-AC seed={seed} (q_margin_weight={q_margin_weight}) ==========")
         model, target_model, eval_envs, best_stable_success = run_stable_training(
             seed, csv_dir, model_dir, device,
             q_margin_weight=q_margin_weight, q_margin=q_margin,
-            variant_tag=variant_tag,
         )
 
-        # Load best-checkpoint weights for adaptation if one was saved; otherwise
-        # fall back to final. This mirrors what the Replay script does and avoids
-        # carrying a late-training regression into the adaptation phase.
-        best_path = model_dir / f"sr_seed{seed}{suffix}_best.pt"
+        best_path = model_dir / f"{AGENT_PREFIX}_seed{seed}_best.pt"
         if best_path.exists() and best_stable_success > 0:
             ck = torch.load(best_path, map_location=device)
             model.load_state_dict(ck["model_state_dict"])
             target_model.load_state_dict(ck["target_model_state_dict"])
-            print(f"[SR seed={seed}{suffix}] loaded best checkpoint (stable={best_stable_success:.2f}) for adaptation")
+            print(f"[SR-AC seed={seed}] loaded best checkpoint (stable={best_stable_success:.2f}) for adaptation")
         stable_state = {
             "model": {k: v.clone() for k, v in model.state_dict().items()},
             "target": {k: v.clone() for k, v in target_model.state_dict().items()},
@@ -428,38 +425,24 @@ def train(
         for cond in CHANGED_CONDITIONS:
             model.load_state_dict(stable_state["model"])
             target_model.load_state_dict(stable_state["target"])
-            run_sr_adaptation(
+            run_adaptation(
                 seed, model, target_model, cond, adapt_envs[cond.name],
                 eval_envs[cond.name], csv_dir, variant="full", device=device,
                 q_margin_weight=q_margin_weight, q_margin=q_margin,
-                variant_tag=variant_tag,
             )
 
-        # Extra Momennejad-style reward-only revaluation on reward_change.
+        # Momennejad-style w-only revaluation on reward_change.
         model.load_state_dict(stable_state["model"])
         target_model.load_state_dict(stable_state["target"])
-        run_sr_adaptation(
+        run_adaptation(
             seed, model, target_model, REWARD_CHANGE, adapt_envs["reward_change"],
             eval_envs["reward_change"], csv_dir, variant="wonly", device=device,
             q_margin_weight=q_margin_weight, q_margin=q_margin,
-            variant_tag=variant_tag,
         )
-
-
-def train_with_qmargin(weight: float = 0.5, q_margin: float = 0.1, variant_tag: str = "qmargin"):
-    """Re-run SR end-to-end with the Q-margin hinge enabled. Outputs sit
-    alongside the baseline (sr_seed{s}_qmargin_train.csv,
-    sr_seed{s}_adapt_{cond}_full_qmargin.csv, sr_seed{s}_qmargin_best.pt, ...).
-    """
-    train(q_margin_weight=weight, q_margin=q_margin, variant_tag=variant_tag)
 
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) > 1 and sys.argv[1] == "qmargin":
-        weight = float(sys.argv[2]) if len(sys.argv) > 2 else 0.5
-        margin = float(sys.argv[3]) if len(sys.argv) > 3 else 0.1
-        tag = sys.argv[4] if len(sys.argv) > 4 else "qmargin"
-        train_with_qmargin(weight=weight, q_margin=margin, variant_tag=tag)
-    else:
-        train()
+    weight = float(sys.argv[1]) if len(sys.argv) > 1 else 0.0
+    margin = float(sys.argv[2]) if len(sys.argv) > 2 else 0.1
+    train(q_margin_weight=weight, q_margin=margin)

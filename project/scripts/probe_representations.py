@@ -1,8 +1,14 @@
-"""Linear-probe the CNN encoders of PPO, SR, and Replay for spatial content.
+"""Linear-probe the CNN encoders of PPO, SR, Replay, and SR-AC for spatial content.
 
 Addresses proposal M2 representation-probing deliverable. Cross-agent
 comparison: if PPO/Replay encoders linearly predict position but SR does
 not, that sharpens the deep-SF policy-extraction discussion.
+
+For SR-AC (slide-15 future-work fix #3) the same shared encoder is probed,
+but additionally the per-action features phi(s, a) -- concatenated across
+actions -- are probed as a separate ``feature_kind="action_conditioned"``
+row. The action-conditioned probe tests whether per-action features
+recover column discrimination that the shared encoder loses.
 """
 
 from __future__ import annotations
@@ -24,41 +30,56 @@ MODEL_DIR = PROJECT_ROOT / "results" / "models"
 OUT_CSV = PROJECT_ROOT / "results" / "csv" / "probe_results.csv"
 
 SEEDS = [0, 1, 2]
-AGENTS = ["ppo", "sr", "replay"]
+# sr_ac is opt-in: only included when its checkpoints exist.
+AGENTS = ["ppo", "sr", "replay", "sr_ac"]
 
-AGENT_FEATURE_DIM = {"ppo": 128, "sr": 64, "replay": 128}
+AGENT_FEATURE_DIM = {"ppo": 128, "sr": 64, "replay": 128, "sr_ac": 64}
 PPO_ENCODER_PREFIX = "module.0.module."  # policy encoder inside the TensorDictModule stack
 
 
+def _checkpoint_path(agent: str, seed: int) -> Path:
+    if agent == "ppo":
+        return MODEL_DIR / f"ppo_seed{seed}_stable_pretrain.pt"
+    if agent == "sr":
+        return MODEL_DIR / f"sr_seed{seed}_best.pt"
+    if agent == "replay":
+        return MODEL_DIR / f"replay_seed{seed}_best.pt"
+    if agent == "sr_ac":
+        return MODEL_DIR / f"sr_ac_seed{seed}_best.pt"
+    raise ValueError(agent)
+
+
 def load_encoder(agent: str, seed: int) -> GridCNNEncoder:
+    """Load the shared CNN encoder for any agent. SR-AC's shared encoder is
+    inside the SRACNet (key prefix "encoder."), same as SR/Replay."""
     feature_dim = AGENT_FEATURE_DIM[agent]
     encoder = GridCNNEncoder(feature_dim=feature_dim)
 
+    ckpt = torch.load(_checkpoint_path(agent, seed), map_location="cpu", weights_only=False)
     if agent == "ppo":
-        ckpt = torch.load(MODEL_DIR / f"ppo_seed{seed}_stable_pretrain.pt",
-                          map_location="cpu", weights_only=False)
         full_sd = ckpt["policy_state_dict"]
         enc_sd = {
             k[len(PPO_ENCODER_PREFIX):]: v
             for k, v in full_sd.items()
             if k.startswith(PPO_ENCODER_PREFIX)
         }
-    elif agent == "sr":
-        ckpt = torch.load(MODEL_DIR / f"sr_seed{seed}_best.pt",
-                          map_location="cpu", weights_only=False)
-        full_sd = ckpt["model_state_dict"]
-        enc_sd = {k[len("encoder."):]: v for k, v in full_sd.items() if k.startswith("encoder.")}
-    elif agent == "replay":
-        ckpt = torch.load(MODEL_DIR / f"replay_seed{seed}_best.pt",
-                          map_location="cpu", weights_only=False)
-        full_sd = ckpt["model_state_dict"]
-        enc_sd = {k[len("encoder."):]: v for k, v in full_sd.items() if k.startswith("encoder.")}
     else:
-        raise ValueError(agent)
+        full_sd = ckpt["model_state_dict"]
+        enc_sd = {k[len("encoder."):]: v for k, v in full_sd.items() if k.startswith("encoder.")}
 
     encoder.load_state_dict(enc_sd)
     encoder.eval()
     return encoder
+
+
+def load_sr_ac_model(seed: int):
+    """Return a fully-loaded SRACNet for action-conditioned probing."""
+    from src.algorithms.sr_ac import SRACNet
+    model = SRACNet(feature_dim=AGENT_FEATURE_DIM["sr_ac"], hidden_dim=64, n_actions=4)
+    ckpt = torch.load(_checkpoint_path("sr_ac", seed), map_location="cpu", weights_only=False)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
+    return model
 
 
 def build_dataset() -> tuple[torch.Tensor, dict[str, np.ndarray]]:
@@ -124,6 +145,12 @@ def main() -> None:
 
     rows = []
     for agent in AGENTS:
+        # Skip silently if checkpoints aren't there (e.g. extension stage not run yet)
+        missing = [s for s in SEEDS if not _checkpoint_path(agent, s).exists()]
+        if missing:
+            print(f"  [skip] {agent}: missing checkpoints for seeds {missing}")
+            continue
+
         for seed in SEEDS:
             encoder = load_encoder(agent, seed)
             with torch.no_grad():
@@ -136,19 +163,51 @@ def main() -> None:
                 else:
                     mean, std = cv_r2(feats, y)
                     metric = "r2"
-                rows.append(
-                    {
+                rows.append({
+                    "agent": agent,
+                    "seed": seed,
+                    "feature_kind": "shared",
+                    "probe_target": name,
+                    "metric": metric,
+                    "score_mean": mean,
+                    "score_std": std,
+                    "feature_dim": AGENT_FEATURE_DIM[agent],
+                    "n_samples": X_obs.shape[0],
+                })
+                print(f"{agent}/shared    seed={seed} {name:12s} {metric}={mean:+.3f} ± {std:.3f}")
+
+            # Action-conditioned probe (SR-AC only): probe the concatenated
+            # phi(s, a) across actions. If action-conditioning recovers
+            # column-axis discrimination, agent_col R^2 should rise here even
+            # when it stays low on the shared encoder.
+            if agent == "sr_ac":
+                model = load_sr_ac_model(seed)
+                with torch.no_grad():
+                    phi_sa = model.action_features(X_obs)         # [N, A, d]
+                    phi_ac = phi_sa.flatten(start_dim=1).cpu().numpy()
+                for name, y in targets.items():
+                    if name == "goal_col":
+                        mean, std = cv_accuracy(phi_ac, y)
+                        metric = "accuracy"
+                    else:
+                        mean, std = cv_r2(phi_ac, y)
+                        metric = "r2"
+                    rows.append({
                         "agent": agent,
                         "seed": seed,
+                        "feature_kind": "action_conditioned",
                         "probe_target": name,
                         "metric": metric,
                         "score_mean": mean,
                         "score_std": std,
-                        "feature_dim": AGENT_FEATURE_DIM[agent],
+                        "feature_dim": phi_ac.shape[1],
                         "n_samples": X_obs.shape[0],
-                    }
-                )
-                print(f"{agent} seed={seed} {name:12s} {metric}={mean:+.3f} ± {std:.3f}")
+                    })
+                    print(f"{agent}/per-action seed={seed} {name:12s} {metric}={mean:+.3f} ± {std:.3f}")
+
+    if not rows:
+        print("No probe rows produced; check that model checkpoints exist.")
+        return
 
     OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
     with OUT_CSV.open("w", newline="") as f:

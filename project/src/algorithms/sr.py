@@ -96,11 +96,24 @@ def compute_sr_loss(
     target_model: SRNet,
     batch: SRBatch,
     gamma: float = 0.99,
+    q_margin_weight: float = 0.0,
+    q_margin: float = 0.1,
 ) -> tuple[torch.Tensor, dict]:
     """
     SR Bellman target:
       psi(s,a) ≈ phi(s) + gamma * psi(s', a*)
     where a* = argmax_a' Q_target(s', a')
+
+    Optional Q-margin regularizer (slide-15 future-work fix #2). When
+    ``q_margin_weight`` > 0, an additional hinge term penalizes states where
+    the gap between top-1 and top-2 Q-values is below ``q_margin``:
+
+        margin_loss = mean( relu(q_margin - (Q_a* - Q_a2)) )
+
+    This directly attacks deep-SF policy-extraction fragility -- when phi
+    encodes goal-distance but not the column axis the optimal action depends
+    on, Q-values tie along that axis and argmax becomes seed-dependent. The
+    hinge forces a confident argmax wherever it would otherwise be ambiguous.
     """
     obs = batch.obs
     actions = batch.actions.long()
@@ -136,6 +149,19 @@ def compute_sr_loss(
     REWARD_LOSS_WEIGHT = 5.0
     total_loss = sr_loss + REWARD_LOSS_WEIGHT * reward_loss
 
+    margin_loss_val = 0.0
+    mean_q_gap_val = 0.0
+    if q_margin_weight > 0.0:
+        # Q for the current state; gradients flow through both psi and w so
+        # margin pressure can reshape either factor.
+        q_all = torch.einsum("bad,d->ba", psi_all, model.reward_weights)  # [B, A]
+        top2_vals, _ = q_all.topk(2, dim=1)                                # [B, 2]
+        q_gap = top2_vals[:, 0] - top2_vals[:, 1]                          # [B]
+        margin_loss = F.relu(q_margin - q_gap).mean()
+        total_loss = total_loss + q_margin_weight * margin_loss
+        margin_loss_val = float(margin_loss.item())
+        mean_q_gap_val = float(q_gap.mean().item())
+
     if DEBUG_SR and obs.shape[0] == 1:
         print("phi shape:", phi.shape)
         print("psi_all shape:", psi_all.shape)
@@ -151,6 +177,8 @@ def compute_sr_loss(
         "reward_loss": float(reward_loss.item()),
         "total_loss": float(total_loss.item()),
         "mean_q": float(model.q_values(obs).mean().item()),
+        "margin_loss": margin_loss_val,
+        "mean_q_gap": mean_q_gap_val,
     }
     return total_loss, metrics
 

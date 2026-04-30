@@ -32,6 +32,10 @@ NUM_ADAPT_BATCHES = 20
 ADAPT_EVAL_INTERVAL = 2
 N_EVAL_EPISODES = 20
 
+# Default adapt-phase LR scale: 1.0 reproduces the original protocol.
+# 0.1 implements the slide-15 future-work fix (see report.md / paper).
+ADAPT_LR_SCALE = 1.0
+
 
 def append_ppo_csv(csv_path: Path, row: dict) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -209,8 +213,10 @@ def run_ppo_adaptation(
     eval_env,
     csv_dir: Path,
     device: str = "cpu",
+    adapt_lr: float = LR,
+    variant_tag: str = "full",
 ) -> None:
-    optimizer = Adam(loss_module.parameters(), lr=LR)
+    optimizer = Adam(loss_module.parameters(), lr=adapt_lr)
     collector = SyncDataCollector(
         create_env_fn=adapt_env_fn,
         policy=policy,
@@ -218,7 +224,7 @@ def run_ppo_adaptation(
         total_frames=FRAMES_PER_BATCH * NUM_ADAPT_BATCHES,
         device=device,
     )
-    adapt_csv = csv_dir / f"ppo_seed{seed}_adapt_{condition.name}_full.csv"
+    adapt_csv = csv_dir / f"ppo_seed{seed}_adapt_{condition.name}_{variant_tag}.csv"
 
     batch_idx = 0
     for tensordict_data in collector:
@@ -263,7 +269,7 @@ def run_ppo_adaptation(
                 "seed": seed,
                 "agent": "ppo",
                 "condition": condition.name,
-                "variant": "full",
+                "variant": variant_tag,
                 "step": batch_idx,
                 "episode_return": ep_return,
                 "episode_steps": ep_steps,
@@ -278,7 +284,7 @@ def run_ppo_adaptation(
     collector.shutdown()
 
 
-def train():
+def train(adapt_lr_scale: float = ADAPT_LR_SCALE, variant_tag: str = "full"):
     device = "cpu"
     results_dir = Path("results")
     csv_dir = results_dir / "csv"
@@ -286,8 +292,10 @@ def train():
     csv_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
 
+    adapt_lr = LR * adapt_lr_scale
+
     for seed in SEEDS:
-        print(f"\n========== PPO seed={seed} ==========")
+        print(f"\n========== PPO seed={seed} (adapt_lr={adapt_lr:.1e}, variant={variant_tag}) ==========")
         policy, value_model, advantage_module, loss_module, eval_envs = run_stable_training(
             seed, csv_dir, model_dir, device,
         )
@@ -305,9 +313,66 @@ def train():
 
             run_ppo_adaptation(
                 seed, policy, value_model, advantage_module, loss_module,
-                cond, make_this_env, eval_envs[cond.name], csv_dir, device=device,
+                cond, make_this_env, eval_envs[cond.name], csv_dir,
+                device=device, adapt_lr=adapt_lr, variant_tag=variant_tag,
+            )
+
+
+def train_adapt_only(adapt_lr_scale: float = 0.1, variant_tag: str = "full_lr10x"):
+    """Re-run only the adaptation phase, loading the existing stable-trained
+    PPO checkpoints from results/models/. Used to study the slide-15 future-work
+    fix (10x smaller adapt LR) without paying the cost of re-training stable.
+    """
+    device = "cpu"
+    results_dir = Path("results")
+    csv_dir = results_dir / "csv"
+    model_dir = results_dir / "models"
+    csv_dir.mkdir(parents=True, exist_ok=True)
+
+    adapt_lr = LR * adapt_lr_scale
+
+    for seed in SEEDS:
+        print(f"\n========== PPO adapt-only seed={seed} (adapt_lr={adapt_lr:.1e}, variant={variant_tag}) ==========")
+        torch.manual_seed(seed)
+
+        train_env = make_env(STABLE, seed=seed)
+        eval_envs = make_all_eval_envs(seed)
+
+        components = build_ppo_components(train_env)
+        policy = components["policy"].to(device)
+        value_model = components["value_model"].to(device)
+        advantage_module = components["advantage_module"]
+        loss_module = components["loss_module"]
+
+        ckpt_path = model_dir / f"ppo_seed{seed}_stable_pretrain.pt"
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        policy.load_state_dict(ckpt["policy_state_dict"])
+        value_model.load_state_dict(ckpt["value_state_dict"])
+        print(f"  loaded {ckpt_path.name}")
+
+        stable_policy = {k: v.clone() for k, v in policy.state_dict().items()}
+        stable_value = {k: v.clone() for k, v in value_model.state_dict().items()}
+        adapt_envs = make_adaptation_envs(seed)
+
+        for cond in CHANGED_CONDITIONS:
+            policy.load_state_dict(stable_policy)
+            value_model.load_state_dict(stable_value)
+
+            def make_this_env(c=cond, s=seed):
+                return make_env(c, seed=s + 30)
+
+            run_ppo_adaptation(
+                seed, policy, value_model, advantage_module, loss_module,
+                cond, make_this_env, eval_envs[cond.name], csv_dir,
+                device=device, adapt_lr=adapt_lr, variant_tag=variant_tag,
             )
 
 
 if __name__ == "__main__":
-    train()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "adapt_only":
+        scale = float(sys.argv[2]) if len(sys.argv) > 2 else 0.1
+        tag = sys.argv[3] if len(sys.argv) > 3 else "full_lr10x"
+        train_adapt_only(adapt_lr_scale=scale, variant_tag=tag)
+    else:
+        train()
