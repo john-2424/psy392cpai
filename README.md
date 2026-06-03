@@ -24,6 +24,19 @@ To test that, the project implements an 8x8 gridworld where observations are 3-c
 
 The experimental design is motivated by computational psychology and neuroscience work on successor representations, reward revaluation, transition revaluation, replay-based planning, and hippocampal remapping.
 
+### Agent Architecture
+
+All three agents use the same pixel-to-feature front end, then branch into architecture-specific learning heads:
+
+```mermaid
+flowchart LR
+    obs["3 x 8 x 8 image observation"] --> enc["Shared CNN encoder: phi(s)"]
+    enc --> ppo["PPO head: policy pi(a|s) + value V(s)"]
+    enc --> sr["SR head: psi(s,a) + reward weights w"]
+    sr --> srq["Q(s,a) = dot(psi,w)"]
+    enc --> replay["Replay/Dyna head: Q(s,a) + replay buffer"]
+```
+
 ### Conditions Studied
 
 The project separates five task conditions:
@@ -36,10 +49,22 @@ The project separates five task conditions:
 | `obs_visual` | Low-intensity distractor pixels are added | Rate-remapping-style observation shift |
 | `obs_remap` | Observation channels are permuted | Global-remapping-style state observation shift |
 
+<p align="center">
+  <img src="project/results/figures/env_conditions.png" alt="Five gridworld observation conditions: stable, reward change, transition change, visual distractors, and channel remap" width="100%">
+</p>
+
 Each agent is trained and evaluated across seeds with two evaluation phases:
 
 - **Zero-shot evaluation**: train on the stable environment, then test directly on all five conditions.
 - **Few-shot adaptation**: continue training on each changed condition and measure how quickly the agent recovers.
+
+```mermaid
+flowchart TD
+    stable["Train each agent on stable condition"] --> zero["Zero-shot evaluation on all five conditions"]
+    zero --> adapt["Few-shot adaptation on each changed condition"]
+    adapt --> metrics["Metrics: greedy success, AUC, t0.5, representation probes"]
+    metrics --> outputs["Outputs: CSVs, figures, checkpoints, summary tables"]
+```
 
 ### Main Takeaways
 
@@ -52,6 +77,26 @@ The final report and presentation highlight several useful findings:
 - The representation probe is one of the most interesting diagnostics: SR learns goal identity and distance-to-goal more clearly than PPO or Replay, but struggles with action-discriminative position information, especially agent column. This reframes the SR result as a policy-extraction fragility rather than simple representational collapse.
 - The SR no-normalization ablation reproduces a deep successor-feature failure mode: without feature normalization, feature norms and Bellman errors diverge quickly.
 - The extension experiments include PPO adaptation with a lower learning rate, Q-margin SR, and an action-conditioned SR variant.
+
+### Selected Results
+
+**Zero-shot generalization.** Frozen stable-trained agents were evaluated across the stable, reward-change, transition-change, visual-distractor, and channel-remap conditions.
+
+<p align="center">
+  <img src="project/results/figures/zero_shot_eval.png" alt="Zero-shot success rate across five conditions for PPO, SR, and Replay agents" width="100%">
+</p>
+
+**Few-shot adaptation.** Continuing training on changed conditions reveals the main adaptation story: Replay/Dyna is strongest overall, PPO is competitive in some settings, and SR shows transient success that is better captured by AUC than by final snapshots alone.
+
+<p align="center">
+  <img src="project/results/figures/adaptation_grid.png" alt="Few-shot adaptation return and greedy success curves across agents and changed conditions" width="100%">
+</p>
+
+**Representation probe.** Linear probes show that the SR encoder captures goal identity and Manhattan distance especially well, while PPO and Replay preserve agent-position information more cleanly.
+
+<p align="center">
+  <img src="project/results/figures/representation_probe.png" alt="Linear probe scores for PPO, SR, and Replay encoders" width="75%">
+</p>
 
 ### Final Project Layout
 
@@ -129,9 +174,19 @@ Important summary artifacts include:
 - [`project/results/summary_table.csv`](project/results/summary_table.csv)
 - [`project/results/adaptation_metrics.csv`](project/results/adaptation_metrics.csv)
 - [`project/results/extensions_summary.csv`](project/results/extensions_summary.csv)
+- [`project/results/figures/env_conditions.png`](project/results/figures/env_conditions.png)
+- [`project/results/figures/zero_shot_eval.png`](project/results/figures/zero_shot_eval.png)
 - [`project/results/figures/representation_probe.png`](project/results/figures/representation_probe.png)
 - [`project/results/figures/adaptation_grid.png`](project/results/figures/adaptation_grid.png)
 - [`project/results/figures/extensions_sr_ac_compare.png`](project/results/figures/extensions_sr_ac_compare.png)
+
+Additional generated figures:
+
+- [`project/results/figures/training_curves.png`](project/results/figures/training_curves.png)
+- [`project/results/figures/cross_agent_adaptation.png`](project/results/figures/cross_agent_adaptation.png)
+- [`project/results/figures/ablation_sr_no_norm.png`](project/results/figures/ablation_sr_no_norm.png)
+- [`project/results/figures/extensions_ppo_lr10x.png`](project/results/figures/extensions_ppo_lr10x.png)
+- [`project/results/figures/extensions_auc_bars.png`](project/results/figures/extensions_auc_bars.png)
 
 ---
 
